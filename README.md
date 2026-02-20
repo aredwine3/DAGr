@@ -148,15 +148,23 @@ dagr status
 
 Shows a dashboard with tasks done/remaining, hours completed, a progress bar, projected completion date, and any tasks at risk of missing their deadline. The projected completion uses the resource-leveled (single-person) schedule, so it reflects when you'll realistically finish -- not an optimistic parallel estimate.
 
-### 8. What should I work on?
+### 8. Morning briefing
+
+```bash
+dagr today
+```
+
+One command to start your day. Shows your progress, any late warnings, background jobs to kick off, today's task schedule, and what to start next.
+
+### 9. What should I work on?
 
 ```bash
 dagr next
 ```
 
-Shows the single most important task to work on right now (lowest slack, highest urgency). If a task is already in progress, it reminds you of that instead.
+Shows the single most important task to work on right now (lowest slack, highest urgency). Also surfaces any background jobs that are ready to kick off. If a task is already in progress, it reminds you of that instead.
 
-### 9. Export for sharing
+### 10. Export for sharing
 
 ```bash
 dagr schedule --csv schedule.csv           # full schedule to CSV
@@ -180,6 +188,7 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 | `dagr critical-path` | Show only the critical path tasks and total duration |
 | `dagr status` | Project health dashboard (progress, deadlines, critical path) |
 | `dagr next` | Show the single next task you should work on |
+| `dagr today` | Morning briefing: status + today's tasks + what to do next |
 | `dagr daily` | Day-by-day plan, serialized for one person (`-n` for day count) |
 | `dagr viz` | Generate a Mermaid flowchart of the DAG (`-o`, `--hide-done`) |
 

@@ -620,6 +620,159 @@ def next_task() -> None:
 
 
 @app.command()
+def today() -> None:
+    """Morning briefing: status summary, today's tasks, and what to do next."""
+    from collections import defaultdict
+    from datetime import timedelta
+    from dagr.scheduler import _skip_weekends_forward
+
+    store = _get_store()
+    config, tasks = store.load()
+    config = _require_config(config)
+    if not tasks:
+        console.print("No tasks found.")
+        return
+
+    try:
+        scheduled = calculate_schedule(tasks, config)
+        leveled = resource_level(tasks, config)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    # --- Status summary ---
+    total = len(tasks)
+    done_count = sum(1 for t in tasks.values() if t.status == TaskStatus.DONE)
+    ip_count = sum(1 for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS)
+    ns_count = total - done_count - ip_count
+    total_hrs = sum(t.duration_hrs for t in tasks.values())
+    done_hrs = sum(t.duration_hrs for t in tasks.values() if t.status == TaskStatus.DONE)
+    remaining_hrs = total_hrs - done_hrs
+    pct = (done_hrs / total_hrs * 100) if total_hrs > 0 else 0
+    proj_end = max(s.earliest_finish for s in leveled)
+
+    bar_width = 30
+    filled = int(bar_width * pct / 100)
+    bar = f"[green]{'█' * filled}[/green][dim]{'░' * (bar_width - filled)}[/dim]"
+
+    console.print(f"\n[bold underline]Good morning![/bold underline]\n")
+    console.print(f"  {bar} {pct:.0f}%  ({done_count}/{total} tasks, {remaining_hrs:.0f}h remaining)")
+    console.print(f"  Projected completion: [bold]{proj_end.strftime('%a %b %d, %Y')}[/bold]")
+
+    # Late warnings (compact)
+    late_tasks = []
+    for s in leveled:
+        if s.task.deadline:
+            dl = datetime.fromisoformat(s.task.deadline)
+            if s.earliest_finish > dl:
+                late_tasks.append((s.task.id, s.task.name, s.task.deadline))
+    if late_tasks:
+        console.print(f"\n  [bold red]⚠ {len(late_tasks)} task(s) at risk of being late[/bold red]")
+
+    # --- In-progress tasks ---
+    in_progress = [t for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS]
+    if in_progress:
+        console.print(f"\n[bold underline]In progress[/bold underline]")
+        for t in in_progress:
+            label = " [dim](BG)[/dim]" if t.background else ""
+            console.print(f"  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h){label}")
+
+    # --- Background tasks to kick off ---
+    crit_ids = {s.task.id for s in get_critical_path(scheduled)}
+    bg_ready = []
+    for s in leveled:
+        if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
+            continue
+        if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
+            bg_ready.append(s)
+    if bg_ready:
+        console.print(f"\n[bold underline]Kick off background jobs[/bold underline]")
+        for s in bg_ready:
+            crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.task.id in crit_ids else ""
+            console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+
+    # --- Today's tasks (from resource-leveled schedule) ---
+    now = datetime.now()
+    today_key = now.strftime("%a %b %d")
+
+    day_tasks: list[dict] = []
+    for s in leveled:
+        if s.task.status == TaskStatus.DONE:
+            continue
+        task_start = s.earliest_start
+        task_end = s.earliest_finish
+        remaining = s.task.duration_hrs
+        current = task_start
+
+        while remaining > 0.01 and current < task_end:
+            current = _skip_weekends_forward(current, config)
+            day_key = current.strftime("%a %b %d")
+
+            day_begin = current.replace(
+                hour=config.day_start_hour, minute=config.day_start_minute,
+                second=0, microsecond=0,
+            )
+            day_end_time = day_begin + timedelta(hours=config.hours_per_day)
+
+            block_start = max(current, day_begin)
+            block_end = min(task_end, day_end_time)
+            hours_today = max(0, (block_end - block_start).total_seconds() / 3600)
+
+            if hours_today > 0.01 and day_key == today_key:
+                day_tasks.append({
+                    "id": s.task.id,
+                    "name": s.task.name,
+                    "hours": round(hours_today, 1),
+                    "time": f"{block_start.strftime('%H:%M')}-{block_end.strftime('%H:%M')}",
+                    "critical": s.task.id in crit_ids,
+                    "bg": s.task.background,
+                })
+                remaining -= hours_today
+
+            next_day = (current + timedelta(days=1)).replace(
+                hour=config.day_start_hour, minute=config.day_start_minute,
+                second=0, microsecond=0,
+            )
+            current = next_day
+
+    if day_tasks:
+        attended_hrs = sum(e["hours"] for e in day_tasks if not e["bg"])
+        bg_hrs = sum(e["hours"] for e in day_tasks if e["bg"])
+        summary = f"{attended_hrs:.1f}h"
+        if bg_hrs > 0:
+            summary += f" + {bg_hrs:.1f}h background"
+
+        console.print(f"\n[bold underline]Today's tasks[/bold underline]  ({summary})")
+        table = Table(show_header=True, box=None, pad_edge=False)
+        table.add_column("Time", style="dim")
+        table.add_column("ID", style="bold")
+        table.add_column("Task")
+        table.add_column("Hours", justify="right")
+        table.add_column("", justify="right")
+
+        for e in sorted(day_tasks, key=lambda x: x["time"]):
+            flags = []
+            if e["critical"]:
+                flags.append("[bold yellow]CRIT[/bold yellow]")
+            if e["bg"]:
+                flags.append("[dim]BG[/dim]")
+            table.add_row(e["time"], e["id"], e["name"], f"{e['hours']:.1f}h", " ".join(flags))
+        console.print(table)
+    else:
+        console.print("\n  [dim]No tasks scheduled for today.[/dim]")
+
+    # --- Next action ---
+    if not in_progress:
+        for s in leveled:
+            if s.task.status == TaskStatus.DONE or s.task.background:
+                continue
+            console.print(f"\n  Run [bold]dagr start {s.task.id}[/bold] to begin.")
+            break
+
+    console.print()
+
+
+@app.command()
 def daily(
     days: Annotated[int, typer.Option("--days", "-n", help="Number of working days to show")] = 10,
 ) -> None:
