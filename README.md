@@ -57,6 +57,20 @@ Outputs a table showing each task's computed start/end times (respecting working
 - **CRITICAL** — on the critical path (zero slack; any delay here delays everything)
 - **LATE** — projected to finish after its deadline
 
+```
+                              Schedule
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ ID   ┃ Task Name                ┃ Hours ┃ Status      ┃ Start         ┃ End           ┃ Slack  ┃ Deadline   ┃ Flags    ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ T-1  │ Run Association Analysis │  10.0 │ not_started │ Feb 23, 09:00 │ Feb 24, 11:00 │   0.0  │ -          │ CRITICAL │
+│ T-2  │ Interpret results        │  10.0 │ not_started │ Feb 24, 11:00 │ Feb 25, 13:00 │   0.0  │ -          │ CRITICAL │
+│ T-3  │ Generate visualizations  │   3.0 │ not_started │ Feb 25, 13:00 │ Feb 25, 16:00 │   0.0  │ -          │ CRITICAL │
+│ T-4  │ Pilot study plotting     │   1.5 │ not_started │ Feb 23, 09:00 │ Feb 23, 10:30 │  21.5  │ -          │ -        │
+│ T-5  │ Behavior Analysis        │   8.0 │ not_started │ Feb 23, 09:00 │ Feb 23, 17:00 │  15.0  │ -          │ -        │
+│ T-6  │ Generate Q1 & Q2 Draft   │   6.0 │ not_started │ Feb 25, 16:00 │ Feb 26, 14:00 │   0.0  │ 2026-03-02 │ CRITICAL │
+└──────┴──────────────────────────┴───────┴─────────────┴───────────────┴───────────────┴────────┴────────────┴──────────┘
+```
+
 ### 4. See your daily plan
 
 ```bash
@@ -74,6 +88,23 @@ Each day shows:
 - Time blocks for each task
 - **CRIT** flag for critical path tasks
 - **BG** flag for background tasks
+
+```
+Mon Feb 23  (8.0h)
+Time         ID    Task                      Hours
+09:00-13:00  T-5   Behavior Analysis          4.0h
+13:00-14:30  T-4   Pilot study plotting       1.5h
+14:30-17:00  T-5   Behavior Analysis          2.5h
+
+Tue Feb 24  (8.0h + 8.0h background)
+Time         ID    Task                       Hours
+09:00-17:00  T-1   Run Association Analysis   8.0h  CRIT BG
+
+Wed Feb 25  (8.0h + 2.0h background)
+Time         ID    Task                       Hours
+09:00-15:00  T-2   Interpret results          6.0h  CRIT
+15:00-17:00  T-1   Run Association Analysis   2.0h  CRIT BG
+```
 
 ### 5. Track progress
 
@@ -129,7 +160,24 @@ dagr update T-5 --no-bg    # revert to attended
 View all details for a specific task:
 
 ```bash
-dagr show T-21
+dagr show T-1
+```
+
+```
+T-1  Run Association Analysis
+  Status:     in_progress
+  Duration:   10.0h
+  Background: yes
+  Depends on: —
+  Blocks:     T-2
+
+  ── Scheduled ──
+  Earliest start:  Mon Feb 23, 09:00
+  Earliest finish: Tue Feb 24, 11:00
+  Latest start:    Mon Feb 23, 09:00
+  Latest finish:   Tue Feb 24, 11:00
+  Slack:           0.0h
+  On the critical path
 ```
 
 Filter the task list:
@@ -148,6 +196,20 @@ dagr status
 
 Shows a dashboard with tasks done/remaining, hours completed, a progress bar, projected completion date, and any tasks at risk of missing their deadline. The projected completion uses the resource-leveled (single-person) schedule, so it reflects when you'll realistically finish -- not an optimistic parallel estimate.
 
+```
+Project Status
+
+  Tasks:  2 done  1 in progress  3 remaining  (6 total)
+  Hours:  11.5h done  26.5h remaining  (38.0h total)
+  Progress: █████████░░░░░░░░░░░░░░░░░░░░░░ 30%
+  Projected completion: Thu Feb 26, 2026
+
+  ⚠ 1 task(s) projected LATE:
+    T-6 Generate Q1 & Q2 Draft — deadline 2026-03-02, projected Mar 04
+
+  Critical path: 4 tasks, 29.0h total
+```
+
 ### 8. Morning briefing
 
 ```bash
@@ -156,6 +218,24 @@ dagr today
 
 One command to start your day. Shows your progress, any late warnings, background jobs to kick off, today's task schedule, and what to start next.
 
+```
+Good morning!
+
+  █████████░░░░░░░░░░░░░░░░░░░░░░ 30%  (2/6 tasks, 26.5h remaining)
+  Projected completion: Thu Feb 26, 2026
+
+Kick off background jobs
+  T-1  Run Association Analysis  (10.0h)  CRIT
+
+Today's schedule
+  Time         ID    Task                  Hours
+  09:00-13:00  T-5   Behavior Analysis      4.0h
+  13:00-14:30  T-4   Pilot study plotting   1.5h
+  14:30-17:00  T-5   Behavior Analysis      2.5h
+
+  Run dagr start T-5 to begin.
+```
+
 ### 9. What should I work on?
 
 ```bash
@@ -163,6 +243,17 @@ dagr next
 ```
 
 Shows the single most important task to work on right now (lowest slack, highest urgency). Also surfaces any background jobs that are ready to kick off. If a task is already in progress, it reminds you of that instead.
+
+```
+Kick off background job(s) first:
+  T-1  Run Association Analysis  (10.0h)  CRIT
+
+  Next up:
+  T-5  Behavior Analysis  (8.0h)
+  Projected start: Mon Feb 23, 09:00
+
+  Run dagr start T-5 to begin.
+```
 
 ### 10. Export for sharing
 
