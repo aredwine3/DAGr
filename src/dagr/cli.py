@@ -550,7 +550,7 @@ def status() -> None:
 
 @app.command("next")
 def next_task() -> None:
-    """Show the single next task you should work on."""
+    """Show the single next task you should work on (and any background tasks to kick off)."""
     store = _get_store()
     config, tasks = store.load()
     config = _require_config(config)
@@ -558,11 +558,27 @@ def next_task() -> None:
     # If something is already in progress, show that
     in_progress = [t for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS]
     if in_progress:
-        t = in_progress[0]
-        console.print(f"\n  [yellow]Currently in progress:[/yellow]")
-        console.print(f"  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
-        if t.actual_start:
-            console.print(f"  Started: {t.actual_start}")
+        for t in in_progress:
+            label = "[dim](BG)[/dim] " if t.background else ""
+            console.print(f"\n  [yellow]In progress:[/yellow]  {label}[bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
+            if t.actual_start:
+                console.print(f"    Started: {t.actual_start}")
+        # Even with in-progress tasks, check for ready background tasks to kick off
+        if not any(t.background for t in in_progress):
+            try:
+                leveled = resource_level(tasks, config)
+            except ValueError:
+                leveled = []
+            for s in leveled:
+                if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
+                    continue
+                # Check all deps are done
+                if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
+                    console.print(f"\n  [dim]Kick off background job:[/dim]  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h)")
+                    if s.is_critical:
+                        console.print("    [bold yellow]On the critical path[/bold yellow]")
+                    console.print(f"    Run [bold]dagr start {s.task.id}[/bold]")
+                    break
         console.print()
         return
 
@@ -572,7 +588,20 @@ def next_task() -> None:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
-    # Find the first non-done, non-background task in the leveled order
+    # Show ready background tasks that should be kicked off
+    bg_shown = False
+    for s in leveled:
+        if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
+            continue
+        # Check all deps are done
+        if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
+            if not bg_shown:
+                console.print("\n  [dim]Kick off background job(s) first:[/dim]")
+                bg_shown = True
+            crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.is_critical else ""
+            console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+
+    # Find the next foreground task
     for s in leveled:
         if s.task.status == TaskStatus.DONE:
             continue
