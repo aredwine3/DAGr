@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+thesis_tasks.json
+schedule.csv
+**/.DS_Store
+settings.json
+import_tasks.py
+dag*.md
+planning*.md
