@@ -319,13 +319,44 @@ dagr viz --hide-done        # only remaining tasks
 dagr viz -o my-graph.md     # custom output file
 ```
 
+Example output for the Quick Start tasks above:
+
+```mermaid
+graph LR
+    T-1["T-1: Run Association
+Analysis (10.0h)"]
+    T-2["T-2: Interpret
+results (10.0h)"]
+    T-3["T-3: Generate
+visualizations (3.0h)"]
+    T-4["T-4: Pilot study
+plotting (1.5h)"]
+    T-5["T-5: Behavior
+Analysis (8.0h)"]
+    T-6["T-6: Generate Q1
+& Q2 Draft (6.0h)"]
+
+    T-1 --> T-2
+    T-2 --> T-3
+    T-3 --> T-6
+    T-4 --> T-6
+    T-5 --> T-6
+
+    style T-1 stroke:#d4a017,stroke-width:4px
+    style T-2 stroke:#d4a017,stroke-width:4px
+    style T-3 stroke:#d4a017,stroke-width:4px
+    style T-6 stroke:#d4a017,stroke-width:4px
+    style T-4 fill:#4a90d9,color:#fff
+    style T-5 fill:#4a90d9,color:#fff
+```
+
 Color-coded nodes:
 - **Green** -- done
 - **Orange** -- in progress
-- **Tan with thick border** -- critical path
-- **Blue** -- default
+- **Tan with thick border** -- critical path (T-1 → T-2 → T-3 → T-6)
+- **Blue** -- default (T-4, T-5 have slack)
 
-Open the output file in VS Code and use Markdown Preview (`Cmd+Shift+V`) to render the Mermaid diagram.
+Open the output file in VS Code and use Markdown Preview (`Cmd+Shift+V`) to render the Mermaid diagram. GitHub also renders Mermaid diagrams natively in markdown files.
 
 ## The Workflow
 
