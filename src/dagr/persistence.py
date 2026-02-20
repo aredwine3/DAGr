@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dagr.models import ProjectConfig, Task
 
-DEFAULT_DB_FILE = "thesis_tasks.json"
+DEFAULT_DB_FILE = "dagr.json"
 
 
 class Store:

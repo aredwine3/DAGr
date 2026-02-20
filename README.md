@@ -1,6 +1,45 @@
-# DAGr - Thesis Timeline Optimizer
+# DAGr
 
-A dynamic project management CLI that uses a **Directed Acyclic Graph (DAG)** to schedule tasks, track progress, and identify your critical path. Built for computationally heavy academic work where tasks have dependencies and timelines shift constantly.
+**DAG-powered project scheduler for the command line.**
+
+Plan tasks, declare dependencies, and let the critical path algorithm tell you what matters most. DAGr schedules in working hours (not wall-clock), handles background jobs, and gives you a realistic single-person timeline.
+
+```mermaid
+graph LR
+    T-1["T-1: Data pipeline
+(10.0h)"]
+    T-2["T-2: Analyze
+results (10.0h)"]
+    T-3["T-3: Build
+visualizations (3.0h)"]
+    T-4["T-4: Write unit
+tests (1.5h)"]
+    T-5["T-5: Code
+review (8.0h)"]
+    T-6["T-6: Write final
+report (6.0h)"]
+
+    T-1 --> T-2
+    T-2 --> T-3
+    T-3 --> T-6
+    T-4 --> T-6
+    T-5 --> T-6
+
+    style T-1 stroke:#d4a017,stroke-width:4px
+    style T-2 stroke:#d4a017,stroke-width:4px
+    style T-3 stroke:#d4a017,stroke-width:4px
+    style T-6 stroke:#d4a017,stroke-width:4px
+    style T-4 fill:#4a90d9,color:#fff
+    style T-5 fill:#4a90d9,color:#fff
+```
+<sub>Critical path in gold. Tasks with slack in blue.</sub>
+
+## Use Cases
+
+- **Research & thesis projects** -- multi-week lab work with compute pipelines and advisor deadlines
+- **Software releases** -- feature work, testing, code review, and deployment with hard ship dates
+- **Course planning** -- assignments, readings, and exams with overlapping deadlines
+- **Any solo project** where tasks have dependencies and you need to know what to work on next
 
 ## Installation
 
@@ -31,19 +70,19 @@ dagr init --start 2026-02-23 --hours-per-day 6 --day-start 10:00 --no-skip-weeke
 ### 2. Add tasks
 
 ```bash
-dagr add "Run Association of Pain Phenotype" --duration 10
-dagr add "Interpret Association results" --duration 10 --depends T-1
-dagr add "Generate initial visualizations" --duration 3 --depends T-2
-dagr add "ABX pilot study results & plotting" --duration 1.5
-dagr add "Q2 Behavior Analysis" --duration 8
-dagr add "Generate Q1 & Q2 Draft" --duration 6 --depends T-3,T-4,T-5 --deadline 2026-03-02
+dagr add "Data pipeline" --duration 10 --bg
+dagr add "Analyze results" --duration 10 --depends T-1
+dagr add "Build visualizations" --duration 3 --depends T-2
+dagr add "Write unit tests" --duration 1.5
+dagr add "Code review" --duration 8
+dagr add "Write final report" --duration 6 --depends T-3,T-4,T-5 --deadline 2026-03-02
 ```
 
 Each task gets an auto-generated ID (`T-1`, `T-2`, ...).
 
 - `--depends T-1,T-2,T-3` — this task can't start until those finish (comma-separated or repeat the flag)
 - `--deadline 2026-03-02` — hard due date; flagged as LATE if the schedule overshoots it
-- `--start 2026-02-25` — earliest date work can begin (e.g., waiting on lab access)
+- `--start 2026-02-25` — earliest date work can begin (e.g., waiting on access)
 - `--bg` — marks a task as **background** (runs unattended, like a compute pipeline)
 
 ### 3. View your schedule
@@ -59,16 +98,16 @@ Outputs a table showing each task's computed start/end times (respecting working
 
 ```
                               Schedule
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ ID   ┃ Task Name                ┃ Hours ┃ Status      ┃ Start         ┃ End           ┃ Slack  ┃ Deadline   ┃ Flags    ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ T-1  │ Run Association Analysis │  10.0 │ not_started │ Feb 23, 09:00 │ Feb 24, 11:00 │   0.0  │ -          │ CRITICAL │
-│ T-2  │ Interpret results        │  10.0 │ not_started │ Feb 24, 11:00 │ Feb 25, 13:00 │   0.0  │ -          │ CRITICAL │
-│ T-3  │ Generate visualizations  │   3.0 │ not_started │ Feb 25, 13:00 │ Feb 25, 16:00 │   0.0  │ -          │ CRITICAL │
-│ T-4  │ Pilot study plotting     │   1.5 │ not_started │ Feb 23, 09:00 │ Feb 23, 10:30 │  21.5  │ -          │ -        │
-│ T-5  │ Behavior Analysis        │   8.0 │ not_started │ Feb 23, 09:00 │ Feb 23, 17:00 │  15.0  │ -          │ -        │
-│ T-6  │ Generate Q1 & Q2 Draft   │   6.0 │ not_started │ Feb 25, 16:00 │ Feb 26, 14:00 │   0.0  │ 2026-03-02 │ CRITICAL │
-└──────┴──────────────────────────┴───────┴─────────────┴───────────────┴───────────────┴────────┴────────────┴──────────┘
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ ID   ┃ Task Name             ┃ Hours ┃ Status      ┃ Start         ┃ End           ┃ Slack ┃ Deadline   ┃ Flags    ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ T-1  │ Data pipeline         │  10.0 │ not_started │ Feb 23, 09:00 │ Feb 24, 11:00 │   0.0 │ -          │ CRITICAL │
+│ T-2  │ Analyze results       │  10.0 │ not_started │ Feb 24, 11:00 │ Feb 25, 13:00 │   0.0 │ -          │ CRITICAL │
+│ T-3  │ Build visualizations  │   3.0 │ not_started │ Feb 25, 13:00 │ Feb 25, 16:00 │   0.0 │ -          │ CRITICAL │
+│ T-4  │ Write unit tests      │   1.5 │ not_started │ Feb 23, 09:00 │ Feb 23, 10:30 │  21.5 │ -          │ -        │
+│ T-5  │ Code review           │   8.0 │ not_started │ Feb 23, 09:00 │ Feb 23, 17:00 │  15.0 │ -          │ -        │
+│ T-6  │ Write final report    │   6.0 │ not_started │ Feb 25, 16:00 │ Feb 26, 14:00 │   0.0 │ 2026-03-02 │ CRITICAL │
+└──────┴───────────────────────┴───────┴─────────────┴───────────────┴───────────────┴───────┴────────────┴──────────┘
 ```
 
 ### 4. See your daily plan
@@ -90,20 +129,22 @@ Each day shows:
 - **BG** flag for background tasks
 
 ```
-Mon Feb 23  (8.0h)
-Time         ID    Task                      Hours
-09:00-13:00  T-5   Behavior Analysis          4.0h
-13:00-14:30  T-4   Pilot study plotting       1.5h
-14:30-17:00  T-5   Behavior Analysis          2.5h
+Mon Feb 23  (8.0h + 8.0h background)
+Time         ID    Task                Hours
+09:00-17:00  T-5   Code review         8.0h
+09:00-17:00  T-1   Data pipeline       8.0h  CRIT BG
 
-Tue Feb 24  (8.0h + 8.0h background)
-Time         ID    Task                       Hours
-09:00-17:00  T-1   Run Association Analysis   8.0h  CRIT BG
+Tue Feb 24  (8.0h + 2.0h background)
+Time         ID    Task                Hours
+09:00-10:30  T-4   Write unit tests    1.5h
+10:30-17:00  T-2   Analyze results     6.5h  CRIT
+09:00-11:00  T-1   Data pipeline       2.0h  CRIT BG
 
-Wed Feb 25  (8.0h + 2.0h background)
-Time         ID    Task                       Hours
-09:00-15:00  T-2   Interpret results          6.0h  CRIT
-15:00-17:00  T-1   Run Association Analysis   2.0h  CRIT BG
+Wed Feb 25  (8.0h)
+Time         ID    Task                   Hours
+09:00-12:30  T-2   Analyze results        3.5h  CRIT
+12:30-15:30  T-3   Build visualizations   3.0h  CRIT
+15:30-17:00  T-6   Write final report     1.5h  CRIT
 ```
 
 ### 5. Track progress
@@ -164,7 +205,7 @@ dagr show T-1
 ```
 
 ```
-T-1  Run Association Analysis
+T-1  Data pipeline
   Status:     in_progress
   Duration:   10.0h
   Background: yes
@@ -184,8 +225,8 @@ Filter the task list:
 
 ```bash
 dagr list --status not_started       # only not-started tasks
-dagr list --search "Q2"              # search by name
-dagr list -s done -q "histology"     # combine filters
+dagr list --search "review"          # search by name
+dagr list -s done -q "pipeline"      # combine filters
 ```
 
 ### 7. Check project health
@@ -200,12 +241,12 @@ Shows a dashboard with tasks done/remaining, hours completed, a progress bar, pr
 Project Status
 
   Tasks:  2 done  1 in progress  3 remaining  (6 total)
-  Hours:  11.5h done  26.5h remaining  (38.0h total)
+  Hours:  11.5h done  27.0h remaining  (38.5h total)
   Progress: █████████░░░░░░░░░░░░░░░░░░░░░░ 30%
   Projected completion: Thu Feb 26, 2026
 
   ⚠ 1 task(s) projected LATE:
-    T-6 Generate Q1 & Q2 Draft — deadline 2026-03-02, projected Mar 04
+    T-6 Write final report — deadline 2026-03-02, projected Mar 04
 
   Critical path: 4 tasks, 29.0h total
 ```
@@ -221,17 +262,15 @@ One command to start your day. Shows your progress, any late warnings, backgroun
 ```
 Good morning!
 
-  █████████░░░░░░░░░░░░░░░░░░░░░░ 30%  (2/6 tasks, 26.5h remaining)
+  █████████░░░░░░░░░░░░░░░░░░░░░░ 30%  (2/6 tasks, 27.0h remaining)
   Projected completion: Thu Feb 26, 2026
 
 Kick off background jobs
-  T-1  Run Association Analysis  (10.0h)  CRIT
+  T-1  Data pipeline  (10.0h)  CRIT
 
 Today's schedule
-  Time         ID    Task                  Hours
-  09:00-13:00  T-5   Behavior Analysis      4.0h
-  13:00-14:30  T-4   Pilot study plotting   1.5h
-  14:30-17:00  T-5   Behavior Analysis      2.5h
+  Time         ID    Task            Hours
+  09:00-17:00  T-5   Code review     8.0h
 
   Run dagr start T-5 to begin.
 ```
@@ -246,10 +285,10 @@ Shows the single most important task to work on right now (lowest slack, highest
 
 ```
 Kick off background job(s) first:
-  T-1  Run Association Analysis  (10.0h)  CRIT
+  T-1  Data pipeline  (10.0h)  CRIT
 
   Next up:
-  T-5  Behavior Analysis  (8.0h)
+  T-5  Code review  (8.0h)
   Projected start: Mon Feb 23, 09:00
 
   Run dagr start T-5 to begin.
@@ -305,11 +344,11 @@ The scheduler runs a **forward pass** (earliest start/finish for each task) and 
 
 ### Background Tasks
 
-Some tasks run unattended (compute pipelines, overnight builds). Mark them with `--bg` and the resource leveler will schedule other hands-on work alongside them. Downstream tasks that depend on a background task still wait for it to finish.
+Some tasks run unattended (compute pipelines, CI builds, overnight renders). Mark them with `--bg` and the resource leveler will schedule other hands-on work alongside them. Downstream tasks that depend on a background task still wait for it to finish.
 
 ### Persistence
 
-Everything is stored in a single `thesis_tasks.json` file in the working directory. The file is human-readable and can be version-controlled if needed.
+Everything is stored in a single `dagr.json` file in the working directory. The file is human-readable and can be version-controlled if needed.
 
 ## Visualize the DAG
 
@@ -319,42 +358,11 @@ dagr viz --hide-done        # only remaining tasks
 dagr viz -o my-graph.md     # custom output file
 ```
 
-Example output for the Quick Start tasks above:
-
-```mermaid
-graph LR
-    T-1["T-1: Run Association
-Analysis (10.0h)"]
-    T-2["T-2: Interpret
-results (10.0h)"]
-    T-3["T-3: Generate
-visualizations (3.0h)"]
-    T-4["T-4: Pilot study
-plotting (1.5h)"]
-    T-5["T-5: Behavior
-Analysis (8.0h)"]
-    T-6["T-6: Generate Q1
-& Q2 Draft (6.0h)"]
-
-    T-1 --> T-2
-    T-2 --> T-3
-    T-3 --> T-6
-    T-4 --> T-6
-    T-5 --> T-6
-
-    style T-1 stroke:#d4a017,stroke-width:4px
-    style T-2 stroke:#d4a017,stroke-width:4px
-    style T-3 stroke:#d4a017,stroke-width:4px
-    style T-6 stroke:#d4a017,stroke-width:4px
-    style T-4 fill:#4a90d9,color:#fff
-    style T-5 fill:#4a90d9,color:#fff
-```
-
 Color-coded nodes:
 - **Green** -- done
 - **Orange** -- in progress
-- **Tan with thick border** -- critical path (T-1 → T-2 → T-3 → T-6)
-- **Blue** -- default (T-4, T-5 have slack)
+- **Tan with thick border** -- critical path
+- **Blue** -- default
 
 Open the output file in VS Code and use Markdown Preview (`Cmd+Shift+V`) to render the Mermaid diagram. GitHub also renders Mermaid diagrams natively in markdown files.
 

@@ -3,7 +3,7 @@ __pycache__/
 .venv/
 dist/
 *.egg-info/
-thesis_tasks.json
+dagr.json
 schedule.csv
 **/.DS_Store
 settings.json
