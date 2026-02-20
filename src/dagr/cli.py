@@ -75,15 +75,25 @@ def add(
     start: Annotated[Optional[str], typer.Option(help="Proposed start date (YYYY-MM-DD)")] = None,
     background: Annotated[bool, typer.Option("--bg", help="Task runs unattended (e.g. a pipeline)")] = False,
 ) -> None:
-    """Add a new task."""
+    """Add a new task.
+
+    Dependencies can be specified individually (--depends T-1 --depends T-2)
+    or comma-separated (--depends T-1,T-2,T-3).
+    """
     store = _get_store()
     config, tasks = store.load()
     tid = store.generate_id(tasks)
+
+    # Expand comma-separated dependencies
+    expanded_deps: list[str] = []
+    for d in depends or []:
+        expanded_deps.extend(part.strip() for part in d.split(",") if part.strip())
+
     tasks[tid] = Task(
         id=tid,
         name=name,
         duration_hrs=duration,
-        depends_on=depends or [],
+        depends_on=expanded_deps,
         deadline=deadline,
         proposed_start=start,
         background=background,
@@ -93,12 +103,33 @@ def add(
 
 
 @app.command("list")
-def list_tasks() -> None:
+def list_tasks(
+    status_filter: Annotated[Optional[str], typer.Option("--status", "-s", help="Filter by status (not_started, in_progress, done)")] = None,
+    search: Annotated[Optional[str], typer.Option("--search", "-q", help="Filter by name (case-insensitive substring match)")] = None,
+) -> None:
     """List all tasks and their status."""
     store = _get_store()
     _, tasks = store.load()
     if not tasks:
         console.print("No tasks found.")
+        return
+
+    filtered = list(tasks.values())
+
+    if status_filter:
+        try:
+            sf = TaskStatus(status_filter)
+        except ValueError:
+            console.print(f"[red]Invalid status '{status_filter}'. Use: not_started, in_progress, done[/red]")
+            raise typer.Exit(1)
+        filtered = [t for t in filtered if t.status == sf]
+
+    if search:
+        q = search.lower()
+        filtered = [t for t in filtered if q in t.name.lower() or q in t.id.lower()]
+
+    if not filtered:
+        console.print("No tasks match the filter.")
         return
 
     table = Table(title="Tasks")
@@ -110,9 +141,9 @@ def list_tasks() -> None:
     table.add_column("BG")
     table.add_column("Deadline")
 
-    for tid, t in tasks.items():
+    for t in filtered:
         table.add_row(
-            tid,
+            t.id,
             t.name,
             f"{t.duration_hrs:.1f}",
             ", ".join(t.depends_on) or "-",
@@ -122,6 +153,8 @@ def list_tasks() -> None:
         )
 
     console.print(table)
+    if status_filter or search:
+        console.print(f"[dim]Showing {len(filtered)} of {len(tasks)} tasks[/dim]")
 
 
 @app.command()
@@ -132,6 +165,8 @@ def update(
     deadline: Annotated[Optional[str], typer.Option(help="New deadline (YYYY-MM-DD)")] = None,
     start: Annotated[Optional[str], typer.Option(help="New proposed start (YYYY-MM-DD)")] = None,
     background: Annotated[Optional[bool], typer.Option("--bg/--no-bg", help="Runs unattended (e.g. a pipeline)")] = None,
+    add_dep: Annotated[Optional[list[str]], typer.Option("--add-dep", help="Add a dependency (task ID)")] = None,
+    remove_dep: Annotated[Optional[list[str]], typer.Option("--remove-dep", help="Remove a dependency (task ID)")] = None,
 ) -> None:
     """Update fields of an existing task."""
     store = _get_store()
@@ -151,6 +186,24 @@ def update(
         t.proposed_start = start
     if background is not None:
         t.background = background
+
+    if add_dep:
+        for dep in add_dep:
+            if dep not in tasks:
+                console.print(f"[red]Dependency {dep} not found.[/red]")
+                raise typer.Exit(1)
+            if dep == task_id:
+                console.print(f"[red]A task cannot depend on itself.[/red]")
+                raise typer.Exit(1)
+            if dep not in t.depends_on:
+                t.depends_on.append(dep)
+
+    if remove_dep:
+        for dep in remove_dep:
+            if dep in t.depends_on:
+                t.depends_on.remove(dep)
+            else:
+                console.print(f"[yellow]{task_id} does not depend on {dep}, skipping.[/yellow]")
 
     store.save(config, tasks)
     console.print(f"[green]Updated {task_id}.[/green]")
@@ -172,6 +225,61 @@ def delete(task_id: str) -> None:
 
     store.save(config, tasks)
     console.print(f"[green]Deleted {task_id}.[/green]")
+
+
+@app.command()
+def show(task_id: str) -> None:
+    """Show all details for a single task, including scheduled times and slack."""
+    store = _get_store()
+    config, tasks = store.load()
+    if task_id not in tasks:
+        console.print(f"[red]Task {task_id} not found.[/red]")
+        raise typer.Exit(1)
+
+    t = tasks[task_id]
+
+    console.print(f"\n[bold]{t.id}[/bold]  {t.name}")
+    console.print(f"  Status:     {t.status.value}")
+    console.print(f"  Duration:   {t.duration_hrs:.1f}h")
+    console.print(f"  Background: {'yes' if t.background else 'no'}")
+    console.print(f"  Depends on: {', '.join(t.depends_on) or 'none'}")
+
+    # Show what depends on this task
+    dependents = [tid for tid, task in tasks.items() if t.id in task.depends_on]
+    console.print(f"  Blocks:     {', '.join(dependents) or 'none'}")
+
+    if t.deadline:
+        console.print(f"  Deadline:   {t.deadline}")
+    if t.proposed_start:
+        console.print(f"  Proposed start: {t.proposed_start}")
+    if t.actual_start:
+        console.print(f"  Actual start:   {t.actual_start}")
+    if t.actual_end:
+        console.print(f"  Actual end:     {t.actual_end}")
+
+    # Show scheduled times if project is initialized
+    if config:
+        try:
+            scheduled = calculate_schedule(tasks, config)
+            for s in scheduled:
+                if s.task.id == task_id:
+                    console.print(f"\n  [dim]── Scheduled ──[/dim]")
+                    console.print(f"  Earliest start:  {s.earliest_start.strftime('%a %b %d, %H:%M')}")
+                    console.print(f"  Earliest finish: {s.earliest_finish.strftime('%a %b %d, %H:%M')}")
+                    console.print(f"  Latest start:    {s.latest_start.strftime('%a %b %d, %H:%M')}")
+                    console.print(f"  Latest finish:   {s.latest_finish.strftime('%a %b %d, %H:%M')}")
+                    console.print(f"  Slack:           {s.total_slack_hrs:.1f}h")
+                    if s.is_critical:
+                        console.print(f"  [bold yellow]On the critical path[/bold yellow]")
+                    if t.deadline:
+                        dl = datetime.fromisoformat(t.deadline)
+                        if s.earliest_finish > dl:
+                            console.print(f"  [bold red]Projected LATE by {(s.earliest_finish - dl).days} day(s)[/bold red]")
+                    break
+        except ValueError:
+            pass
+
+    console.print()
 
 
 @app.command("start")

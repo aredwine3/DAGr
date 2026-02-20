@@ -36,12 +36,12 @@ dagr add "Interpret Association results" --duration 10 --depends T-1
 dagr add "Generate initial visualizations" --duration 3 --depends T-2
 dagr add "ABX pilot study results & plotting" --duration 1.5
 dagr add "Q2 Behavior Analysis" --duration 8
-dagr add "Generate Q1 & Q2 Draft" --duration 6 --depends T-3 --depends T-4 --depends T-5 --deadline 2026-03-02
+dagr add "Generate Q1 & Q2 Draft" --duration 6 --depends T-3,T-4,T-5 --deadline 2026-03-02
 ```
 
 Each task gets an auto-generated ID (`T-1`, `T-2`, ...).
 
-- `--depends T-1` — this task can't start until T-1 finishes (repeat for multiple dependencies)
+- `--depends T-1,T-2,T-3` — this task can't start until those finish (comma-separated or repeat the flag)
 - `--deadline 2026-03-02` — hard due date; flagged as LATE if the schedule overshoots it
 - `--start 2026-02-25` — earliest date work can begin (e.g., waiting on lab access)
 - `--bg` — marks a task as **background** (runs unattended, like a compute pipeline)
@@ -112,11 +112,32 @@ Update a task's duration when reality doesn't match the estimate:
 dagr update T-2 --duration 15
 ```
 
-All downstream tasks automatically recalculate. Mark a task as background if it runs unattended:
+All downstream tasks automatically recalculate. Add or remove dependencies after the fact:
+
+```bash
+dagr update T-6 --add-dep T-10       # T-6 now waits for T-10
+dagr update T-6 --remove-dep T-3     # T-6 no longer waits for T-3
+```
+
+Mark a task as background if it runs unattended:
 
 ```bash
 dagr update T-5 --bg       # mark as background
 dagr update T-5 --no-bg    # revert to attended
+```
+
+View all details for a specific task:
+
+```bash
+dagr show T-21
+```
+
+Filter the task list:
+
+```bash
+dagr list --status not_started       # only not-started tasks
+dagr list --search "Q2"              # search by name
+dagr list -s done -q "histology"     # combine filters
 ```
 
 ### 7. Check project health
@@ -148,9 +169,10 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 |---|---|
 | `dagr init` | Set project start date and working hours config |
 | `dagr add` | Add a new task (`-d`, `--depends`, `--deadline`, `--start`, `--bg`) |
-| `dagr list` | Show all tasks with status and background flag |
-| `dagr update <ID>` | Update a task's name, duration, deadline, start, or bg status |
+| `dagr list` | Show all tasks (`--status`, `--search` to filter) |
+| `dagr update <ID>` | Update task fields (`--add-dep`, `--remove-dep` for dependencies) |
 | `dagr delete <ID>` | Remove a task and clean up dependency references |
+| `dagr show <ID>` | View all details for a task (deps, schedule, slack) |
 | `dagr start <ID>` | Mark a task as in-progress (records timestamp) |
 | `dagr done <ID>` | Mark a task as completed (shows actual vs estimated time) |
 | `dagr reset <ID>` | Reset a task back to not_started (undo start/done) |
