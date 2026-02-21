@@ -143,10 +143,11 @@ def add(
 def list_tasks(
     status_filter: Annotated[Optional[str], typer.Option("--status", "-s", help="Filter by status (not_started, in_progress, done)")] = None,
     search: Annotated[Optional[str], typer.Option("--search", "-q", help="Filter by name (case-insensitive substring match)")] = None,
+    csv: Annotated[Optional[str], typer.Option("--csv", help="Export list to CSV file")] = None,
 ) -> None:
     """List all tasks and their status."""
     store = _get_store()
-    _, tasks = store.load()
+    config, tasks = store.load()
     if not tasks:
         console.print("No tasks found.")
         return
@@ -169,6 +170,76 @@ def list_tasks(
         console.print("No tasks match the filter.")
         return
 
+    # Calculate schedules to populate dates and slack
+    unconstrained_map = {}
+    leveled_map = {}
+    if config:
+        try:
+            # Used for Slack and absolute LATE boundaries
+            scheduled = calculate_schedule(tasks, config)
+            for s in scheduled:
+                unconstrained_map[s.task.id] = s
+            
+            # Used for realistic Projected Start and Projected Finish
+            leveled = resource_level(tasks, config)
+            for s in leveled:
+                leveled_map[s.task.id] = s
+        except ValueError:
+            pass # If DAG has cycles, ignore and just print basic list
+
+    if csv:
+        import csv as csv_mod
+        from pathlib import Path
+
+        with Path(csv).open("w", newline="") as f:
+            writer = csv_mod.writer(f)
+            writer.writerow([
+                "ID", "Name", "Hours", "Depends On", "Status", "BG",
+                "Projected Start", "Projected Finish", "Slack (h)", "Deadline", "Flags"
+            ])
+            for t in filtered:
+                p_start, p_finish, slack_str, flags_str = "", "", "", ""
+                flags = []
+
+                if t.id in unconstrained_map:
+                    u_sched = unconstrained_map[t.id]
+                    slack_str = f"{u_sched.total_slack_hrs:.1f}"
+                    if u_sched.is_critical:
+                        flags.append("CRITICAL")
+                    
+                    if t.deadline:
+                        dl = datetime.fromisoformat(t.deadline)
+                        if t.id in leveled_map:
+                            if leveled_map[t.id].earliest_finish > dl:
+                                flags.append("PROJ. LATE")
+                        else:
+                            if u_sched.earliest_finish > dl:
+                                flags.append("LATE")
+                
+                if t.id in leveled_map:
+                    l_sched = leveled_map[t.id]
+                    p_start = l_sched.earliest_start.strftime("%Y-%m-%d %H:%M")
+                    p_finish = l_sched.earliest_finish.strftime("%Y-%m-%d %H:%M")
+
+                if flags:
+                    flags_str = " | ".join(flags)
+
+                writer.writerow([
+                    t.id,
+                    t.name,
+                    f"{t.duration_hrs:.1f}",
+                    ", ".join(t.depends_on) or "",
+                    t.status.value,
+                    "bg" if t.background else "",
+                    p_start,
+                    p_finish,
+                    slack_str,
+                    t.deadline or "",
+                    flags_str,
+                ])
+        console.print(f"[green]Exported {len(filtered)} tasks to {csv}[/green]")
+        return
+
     table = Table(title="Tasks")
     table.add_column("ID")
     table.add_column("Name")
@@ -176,9 +247,45 @@ def list_tasks(
     table.add_column("Depends On")
     table.add_column("Status")
     table.add_column("BG")
+    table.add_column("Projected Start")
+    table.add_column("Projected Finish")
+    table.add_column("Slack (h)")
     table.add_column("Deadline")
+    table.add_column("Flags")
 
     for t in filtered:
+        p_start, p_finish, slack_str, flags_str = "-", "-", "-", "-"
+        flags = []
+        style = None
+
+        if t.id in unconstrained_map:
+            u_sched = unconstrained_map[t.id]
+            slack_str = f"{u_sched.total_slack_hrs:.1f}"
+            if u_sched.is_critical:
+                flags.append("CRITICAL")
+                style = "bold yellow"
+            
+            if t.deadline:
+                dl = datetime.fromisoformat(t.deadline)
+                # We check lateness against the realistic constrained finish
+                if t.id in leveled_map:
+                    if leveled_map[t.id].earliest_finish > dl:
+                        flags.append("PROJ. LATE")
+                        style = "bold red"
+                else:
+                    # Fallback to unconstrained if resource leveling wasn't possible
+                    if u_sched.earliest_finish > dl:
+                        flags.append("LATE")
+                        style = "bold red"
+        
+        if t.id in leveled_map:
+            l_sched = leveled_map[t.id]
+            p_start = l_sched.earliest_start.strftime("%b %d, %H:%M")
+            p_finish = l_sched.earliest_finish.strftime("%b %d, %H:%M")
+
+        if flags:
+            flags_str = " | ".join(flags)
+
         table.add_row(
             t.id,
             t.name,
@@ -186,7 +293,12 @@ def list_tasks(
             ", ".join(t.depends_on) or "-",
             t.status.value,
             "bg" if t.background else "",
+            p_start,
+            p_finish,
+            slack_str,
             t.deadline or "-",
+            flags_str,
+            style=style,
         )
 
     console.print(table)
