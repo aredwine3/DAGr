@@ -11,11 +11,17 @@ from rich.table import Table
 
 from dagr.models import ProjectConfig, Task, TaskStatus
 from dagr.persistence import Store
-from dagr.scheduler import add_working_hours, build_dag, calculate_schedule, get_critical_path, resource_level
+from dagr.scheduler import (
+    add_working_hours,
+    build_dag,
+    calculate_schedule,
+    get_critical_path,
+    resource_level,
+)
 
 app = typer.Typer(
     name="dagr",
-    help="Thesis timeline optimizer using DAG-based scheduling.",
+    help="DAG-powered project scheduler for the command line.",
     no_args_is_help=True,
 )
 console = Console()
@@ -23,6 +29,37 @@ console = Console()
 
 def _get_store() -> Store:
     return Store()
+
+
+def _complete_task_id(incomplete: str) -> list[str]:
+    """Shell completion for task IDs. Matches against both ID and name."""
+    try:
+        store = Store()
+        _, tasks = store.load()
+    except Exception:
+        return []
+        
+    results: list[str] = []
+    q = incomplete.lower()
+    
+    for tid, task in tasks.items():
+        # Match against either ID or Name
+        if q in tid.lower() or q in task.name.lower():
+            # IMPORTANT: Put the name FIRST so the shell prefix-matching works!
+            # It will output: "DEFENSE (T-85)"
+            results.append(f"{task.name} ({tid})")
+            
+    return results
+
+def _parse_task_id(task_id_arg: str) -> str:
+    """Extracts the ID if the user used the autocompleted 'Name (ID)' format."""
+    # If it contains "(T-", we assume it's our formatted string
+    if "(" in task_id_arg and task_id_arg.endswith(")"):
+        # Split by '(' and take the last part, then remove the trailing ')'
+        return task_id_arg.split("(")[-1].strip(")")
+    
+    # Otherwise, assume they just typed the ID normally (e.g. "T-85")
+    return task_id_arg.strip()
 
 
 def _require_config(config: ProjectConfig | None) -> ProjectConfig:
@@ -159,7 +196,7 @@ def list_tasks(
 
 @app.command()
 def update(
-    task_id: str,
+    task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)],
     name: Annotated[Optional[str], typer.Option(help="New task name")] = None,
     duration: Annotated[Optional[float], typer.Option(help="New duration in hours")] = None,
     deadline: Annotated[Optional[str], typer.Option(help="New deadline (YYYY-MM-DD)")] = None,
@@ -210,7 +247,7 @@ def update(
 
 
 @app.command()
-def delete(task_id: str) -> None:
+def delete(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Delete a task and remove it from dependency lists."""
     store = _get_store()
     config, tasks = store.load()
@@ -228,8 +265,10 @@ def delete(task_id: str) -> None:
 
 
 @app.command()
-def show(task_id: str) -> None:
-    """Show all details for a single task, including scheduled times and slack."""
+def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
+    """Show all details for a single task..."""
+    task_id = _parse_task_id(task_id) # Extract "T-1" from "T-1: Setup Database"
+    
     store = _get_store()
     config, tasks = store.load()
     if task_id not in tasks:
@@ -283,7 +322,7 @@ def show(task_id: str) -> None:
 
 
 @app.command("start")
-def start_task(task_id: str) -> None:
+def start_task(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Mark a task as in-progress with current timestamp."""
     store = _get_store()
     config, tasks = store.load()
@@ -299,7 +338,7 @@ def start_task(task_id: str) -> None:
 
 
 @app.command()
-def done(task_id: str) -> None:
+def done(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Mark a task as done with current timestamp."""
     store = _get_store()
     config, tasks = store.load()
@@ -335,7 +374,7 @@ def done(task_id: str) -> None:
 
 
 @app.command()
-def reset(task_id: str) -> None:
+def reset(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Reset a task back to not_started (undo start/done)."""
     store = _get_store()
     config, tasks = store.load()
@@ -624,6 +663,7 @@ def today() -> None:
     """Morning briefing: status summary, today's tasks, and what to do next."""
     from collections import defaultdict
     from datetime import timedelta
+
     from dagr.scheduler import _skip_weekends_forward
 
     store = _get_store()
@@ -778,6 +818,7 @@ def daily(
 ) -> None:
     """Show a day-by-day breakdown of scheduled tasks (single-person, serialized)."""
     from collections import defaultdict
+
     from dagr.scheduler import _skip_weekends_forward
 
     store = _get_store()
@@ -954,3 +995,115 @@ def viz(
     Path(output).write_text("\n".join(lines) + "\n")
     console.print(f"[green]Wrote Mermaid diagram to {output}[/green]")
     console.print("Open in VS Code and use Markdown Preview (Cmd+Shift+V) to view.")
+
+@app.command()
+def viz_html(
+    output: Annotated[str, typer.Option("-o", "--output", help="Output file path")] = "dag.html",
+    hide_done: bool = False,
+) -> None:
+    """Generate an interactive PyVis HTML flowchart of the task DAG."""
+    from pyvis.network import Network
+    
+    store = _get_store()
+    config, tasks = store.load()
+    if not tasks:
+        console.print("No tasks to visualize.")
+        return
+
+    # Get critical path
+    crit_ids: set[str] = set()
+    if config is not None:
+        try:
+            scheduled = calculate_schedule(tasks, config)
+            crit_ids = {s.task.id for s in get_critical_path(scheduled)}
+        except ValueError:
+            pass
+
+    # Initialize PyVis network
+    net = Network(height="800px", width="100%", directed=True, notebook=False)
+
+    # Add nodes
+    for tid, task in tasks.items():
+        if hide_done and task.status == TaskStatus.DONE:
+            continue
+            
+        if task.status == TaskStatus.DONE:
+            color = "#2d6a4f"  
+            font_color = "#d8f3dc"
+        elif task.status == TaskStatus.IN_PROGRESS:
+            color = "#e76f51"  
+            font_color = "#ffffff"
+        elif tid in crit_ids:
+            color = "#d4a373"  
+            font_color = "#000000"
+        else:
+            color = "#457b9d"  
+            font_color = "#f1faee"
+            
+        # Clean label with line breaks
+        label = f"{tid}\n{task.name}\n{task.duration_hrs:.1f}h"
+        
+        net.add_node(
+            tid, 
+            label=label, 
+            title=task.name,
+            color=color, 
+            shape="box",
+            font={"color": font_color, "face": "Helvetica", "size": 14}
+        )
+
+    # Add edges
+    for tid, task in tasks.items():
+        if hide_done and task.status == TaskStatus.DONE:
+            continue
+        for dep in task.depends_on:
+            if hide_done and dep in tasks and tasks[dep].status == TaskStatus.DONE:
+                continue
+            if dep in tasks:
+                net.add_edge(dep, tid, color="#bdc3c7")
+
+    # Use PyVis layout settings that strictly mimic Mermaid's Dagre engine
+    net.set_options("""
+    var options = {
+      "nodes": {
+        "margin": 10,
+        "widthConstraint": {
+          "maximum": 220
+        }
+      },
+      "edges": {
+        "smooth": {
+          "type": "cubicBezier",
+          "forceDirection": "horizontal",
+          "roundness": 0.4
+        },
+        "arrows": {
+          "to": {"enabled": true, "scaleFactor": 0.6}
+        }
+      },
+      "layout": {
+        "hierarchical": {
+          "enabled": true,
+          "direction": "LR",
+          "sortMethod": "directed",
+          "levelSeparation": 280,
+          "nodeSpacing": 120,
+          "treeSpacing": 120,
+          "blockShifting": true,
+          "edgeMinimization": true,
+          "parentCentralization": true
+        }
+      },
+      "physics": {
+        "enabled": false
+      },
+      "interaction": {
+        "navigationButtons": true,
+        "dragNodes": true,
+        "hover": true
+      }
+    }
+    """)
+
+    net.save_graph(output)
+    console.print(f"[green]Wrote structured, interactive HTML diagram to {output}[/green]")
