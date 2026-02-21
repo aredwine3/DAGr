@@ -211,10 +211,10 @@ def list_tasks(
                         dl = datetime.fromisoformat(t.deadline)
                         if t.id in leveled_map:
                             if leveled_map[t.id].earliest_finish > dl:
-                                flags.append("PROJ. LATE")
+                                flags.append("COMPLETED LATE" if t.status == TaskStatus.DONE else "PROJ. LATE")
                         else:
                             if u_sched.earliest_finish > dl:
-                                flags.append("LATE")
+                                flags.append("COMPLETED LATE" if t.status == TaskStatus.DONE else "LATE")
                 
                 if t.id in leveled_map:
                     l_sched = leveled_map[t.id]
@@ -270,12 +270,12 @@ def list_tasks(
                 # We check lateness against the realistic constrained finish
                 if t.id in leveled_map:
                     if leveled_map[t.id].earliest_finish > dl:
-                        flags.append("PROJ. LATE")
+                        flags.append("COMPLETED LATE" if t.status == TaskStatus.DONE else "PROJ. LATE")
                         style = "bold red"
                 else:
                     # Fallback to unconstrained if resource leveling wasn't possible
                     if u_sched.earliest_finish > dl:
-                        flags.append("LATE")
+                        flags.append("COMPLETED LATE" if t.status == TaskStatus.DONE else "LATE")
                         style = "bold red"
         
         if t.id in leveled_map:
@@ -425,7 +425,11 @@ def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
                     if t.deadline:
                         dl = datetime.fromisoformat(t.deadline)
                         if s.earliest_finish > dl:
-                            console.print(f"  [bold red]Projected LATE by {(s.earliest_finish - dl).days} day(s)[/bold red]")
+                            days_late = (s.earliest_finish - dl).days
+                            if t.status == TaskStatus.DONE:
+                                console.print(f"  [bold red]Completed LATE by {days_late} day(s)[/bold red]")
+                            else:
+                                console.print(f"  [bold red]Projected LATE by {days_late} day(s)[/bold red]")
                     break
         except ValueError:
             pass
@@ -539,7 +543,7 @@ def schedule(
                 if s.task.deadline:
                     dl = datetime.fromisoformat(s.task.deadline)
                     if s.earliest_finish > dl:
-                        flags.append("LATE")
+                        flags.append("COMPLETED LATE" if s.task.status == TaskStatus.DONE else "LATE")
                 writer.writerow([
                     s.task.id,
                     s.task.name,
@@ -576,7 +580,7 @@ def schedule(
 
         style = (
             "bold red"
-            if "LATE" in flags
+            if "LATE" in flags or "COMPLETED LATE" in flags
             else ("bold yellow" if "CRITICAL" in flags else None)
         )
 
@@ -681,6 +685,8 @@ def status() -> None:
     # Check deadlines using resource-leveled schedule
     late_tasks = []
     for s in leveled:
+        if s.task.status == TaskStatus.DONE:
+            continue
         if s.task.deadline:
             dl = datetime.fromisoformat(s.task.deadline)
             if s.earliest_finish > dl:
@@ -814,6 +820,8 @@ def today() -> None:
     # Late warnings (compact)
     late_tasks = []
     for s in leveled:
+        if s.task.status == TaskStatus.DONE:
+            continue
         if s.task.deadline:
             dl = datetime.fromisoformat(s.task.deadline)
             if s.earliest_finish > dl:
