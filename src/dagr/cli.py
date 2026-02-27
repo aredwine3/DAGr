@@ -11,7 +11,10 @@ from rich.table import Table
 
 from dagr.models import ProjectConfig, Task, TaskStatus
 from dagr.persistence import Store
+import networkx as nx
+
 from dagr.scheduler import (
+    ScheduledTask,
     add_working_hours,
     build_dag,
     calculate_schedule,
@@ -125,6 +128,12 @@ def add(
     expanded_deps: list[str] = []
     for d in depends or []:
         expanded_deps.extend(part.strip() for part in d.split(",") if part.strip())
+
+    # Validate that all dependencies exist
+    for dep in expanded_deps:
+        if dep not in tasks:
+            console.print(f"[red]Dependency {dep} not found.[/red]")
+            raise typer.Exit(1)
 
     tasks[tid] = Task(
         id=tid,
@@ -318,6 +327,7 @@ def update(
     remove_dep: Annotated[Optional[list[str]], typer.Option("--remove-dep", help="Remove a dependency (task ID)")] = None,
 ) -> None:
     """Update fields of an existing task."""
+    task_id = _parse_task_id(task_id)
     store = _get_store()
     config, tasks = store.load()
     if task_id not in tasks:
@@ -361,6 +371,7 @@ def update(
 @app.command()
 def delete(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Delete a task and remove it from dependency lists."""
+    task_id = _parse_task_id(task_id)
     store = _get_store()
     config, tasks = store.load()
     if task_id not in tasks:
@@ -419,7 +430,10 @@ def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
                     console.print(f"  Earliest finish: {s.earliest_finish.strftime('%a %b %d, %H:%M')}")
                     console.print(f"  Latest start:    {s.latest_start.strftime('%a %b %d, %H:%M')}")
                     console.print(f"  Latest finish:   {s.latest_finish.strftime('%a %b %d, %H:%M')}")
-                    console.print(f"  Slack:           {s.total_slack_hrs:.1f}h")
+                    if s.total_slack_hrs < 0:
+                        console.print(f"  Slack:           [bold red]{s.total_slack_hrs:.1f}h[/bold red]")
+                    else:
+                        console.print(f"  Slack:           {s.total_slack_hrs:.1f}h")
                     if s.is_critical:
                         console.print(f"  [bold yellow]On the critical path[/bold yellow]")
                     if t.deadline:
@@ -440,6 +454,7 @@ def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
 @app.command("start")
 def start_task(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Mark a task as in-progress with current timestamp."""
+    task_id = _parse_task_id(task_id)
     store = _get_store()
     config, tasks = store.load()
     if task_id not in tasks:
@@ -456,6 +471,7 @@ def start_task(task_id: Annotated[str, typer.Argument(autocompletion=_complete_t
 @app.command()
 def done(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Mark a task as done with current timestamp."""
+    task_id = _parse_task_id(task_id)
     store = _get_store()
     config, tasks = store.load()
     if task_id not in tasks:
@@ -463,6 +479,7 @@ def done(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
         raise typer.Exit(1)
 
     t = tasks[task_id]
+    was_started = t.actual_start is not None
     t.status = TaskStatus.DONE
     t.actual_end = datetime.now().isoformat()
     if not t.actual_start:
@@ -470,8 +487,9 @@ def done(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
     store.save(config, tasks)
     console.print(f"[green]Completed {task_id} at {t.actual_end}[/green]")
 
-    # Show actual vs estimated comparison
-    if t.actual_start:
+    if not was_started:
+        console.print(f"  [yellow]Note: task was not started first (dagr start {task_id}), so actual time cannot be measured.[/yellow]")
+    elif t.actual_start:
         start_dt = datetime.fromisoformat(t.actual_start)
         end_dt = datetime.fromisoformat(t.actual_end)
         if config:
@@ -492,6 +510,7 @@ def done(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
 @app.command()
 def reset(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)]) -> None:
     """Reset a task back to not_started (undo start/done)."""
+    task_id = _parse_task_id(task_id)
     store = _get_store()
     config, tasks = store.load()
     if task_id not in tasks:
@@ -601,7 +620,9 @@ def schedule(
 
 
 @app.command("critical-path")
-def critical_path() -> None:
+def critical_path(
+    sort: Annotated[str, typer.Option(help="Sort order: topo (default), chrono, chain")] = "topo",
+) -> None:
     """Display only the tasks on the critical path."""
     store = _get_store()
     config, tasks = store.load()
@@ -618,26 +639,74 @@ def critical_path() -> None:
         console.print("No critical path found.")
         return
 
-    table = Table(title="Critical Path")
+    if sort == "chrono":
+        crit.sort(key=lambda s: s.earliest_start)
+        _print_critical_table(crit, title="Critical Path (chronological)")
+    elif sort == "chain":
+        G = build_dag(tasks)
+        crit_ids = {s.task.id for s in crit}
+        crit_map = {s.task.id: s for s in crit}
+
+        # Build a subgraph of only critical tasks and find connected chains
+        sub = G.subgraph(crit_ids).copy()
+        chains: list[list[str]] = []
+        visited: set[str] = set()
+
+        # Find roots (no critical predecessors) and trace chains from each
+        for tid in nx.topological_sort(sub):
+            if tid in visited:
+                continue
+            chain: list[str] = []
+            _trace_chain(sub, tid, visited, chain)
+            chains.append(chain)
+
+        for i, chain in enumerate(chains, 1):
+            chain_tasks = [crit_map[tid] for tid in chain]
+            chain_hrs = sum(s.task.duration_hrs for s in chain_tasks)
+            console.print(f"\n[bold]Chain {i}[/bold]  ({chain_hrs:.1f}h)")
+            _print_critical_table(chain_tasks, title=None)
+
+        console.print(f"\n[dim]{len(chains)} chain(s), {len(crit)} critical tasks total[/dim]")
+    else:
+        _print_critical_table(crit, title="Critical Path")
+
+    total_hrs = sum(s.task.duration_hrs for s in crit)
+    console.print(f"\nTotal critical path duration: [bold]{total_hrs:.1f}[/bold] hours")
+
+
+def _trace_chain(G: "nx.DiGraph", start: str, visited: set[str], chain: list[str]) -> None:
+    """Walk a chain of critical tasks depth-first, collecting in topological order."""
+    visited.add(start)
+    chain.append(start)
+    for succ in G.successors(start):
+        if succ not in visited:
+            _trace_chain(G, succ, visited, chain)
+
+
+def _print_critical_table(tasks_list: list[ScheduledTask], title: str | None) -> None:
+    """Print a critical path table."""
+    table = Table(title=title)
     table.add_column("ID")
     table.add_column("Task Name")
     table.add_column("Hours")
+    table.add_column("Slack")
     table.add_column("Start")
     table.add_column("End")
 
-    total_hrs = 0.0
-    for s in crit:
+    for s in tasks_list:
+        slack_str = f"{s.total_slack_hrs:.1f}"
+        style = "bold red" if s.total_slack_hrs < 0 else None
         table.add_row(
             s.task.id,
             s.task.name,
             f"{s.task.duration_hrs:.1f}",
+            slack_str,
             s.earliest_start.strftime("%b %d, %H:%M"),
             s.earliest_finish.strftime("%b %d, %H:%M"),
+            style=style,
         )
-        total_hrs += s.task.duration_hrs
 
     console.print(table)
-    console.print(f"\nTotal critical path duration: [bold]{total_hrs:.1f}[/bold] hours")
 
 
 @app.command()
@@ -853,7 +922,7 @@ def today() -> None:
 
     # --- Today's tasks (from resource-leveled schedule) ---
     now = datetime.now()
-    today_key = now.strftime("%a %b %d")
+    today_key = now.strftime("%Y-%m-%d")
 
     day_tasks: list[dict] = []
     for s in leveled:
@@ -866,7 +935,7 @@ def today() -> None:
 
         while remaining > 0.01 and current < task_end:
             current = _skip_weekends_forward(current, config)
-            day_key = current.strftime("%a %b %d")
+            day_key = current.strftime("%Y-%m-%d")
 
             day_begin = current.replace(
                 hour=config.day_start_hour, minute=config.day_start_minute,
@@ -961,6 +1030,7 @@ def daily(
     from datetime import timedelta
 
     day_tasks: dict[str, list[dict]] = defaultdict(list)
+    day_labels: dict[str, str] = {}  # ISO date -> display label
 
     for s in leveled:
         if s.task.status == TaskStatus.DONE:
@@ -973,7 +1043,8 @@ def daily(
 
         while remaining > 0.01 and current < task_end:
             current = _skip_weekends_forward(current, config)
-            day_key = current.strftime("%a %b %d")
+            day_key = current.strftime("%Y-%m-%d")
+            day_labels[day_key] = current.strftime("%a %b %d")
 
             day_begin = current.replace(
                 hour=config.day_start_hour,
@@ -1005,7 +1076,7 @@ def daily(
             current = next_day
 
     shown = 0
-    for day_key in sorted(day_tasks.keys(), key=lambda d: datetime.strptime(d, "%a %b %d")):
+    for day_key in sorted(day_tasks.keys()):
         if shown >= days:
             break
 
@@ -1016,7 +1087,7 @@ def daily(
         summary = f"{attended_hrs:.1f}h"
         if bg_hrs > 0:
             summary += f" + {bg_hrs:.1f}h background"
-        console.print(f"\n[bold underline]{day_key}[/bold underline]  ({summary})")
+        console.print(f"\n[bold underline]{day_labels[day_key]}[/bold underline]  ({summary})")
 
         table = Table(show_header=True, box=None, pad_edge=False)
         table.add_column("Time", style="dim")

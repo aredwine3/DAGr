@@ -23,7 +23,7 @@ class ScheduledTask:
 
     @property
     def is_critical(self) -> bool:
-        return self.total_slack_hrs == 0.0
+        return self.total_slack_hrs <= 0.0
 
 
 def build_dag(tasks: dict[str, Task]) -> nx.DiGraph:
@@ -283,13 +283,28 @@ def calculate_schedule(
         else:
             lf[tid] = min(ls[s] for s in succs)
 
+        # Constrain latest finish by the task's own deadline
+        if task.deadline:
+            dl = datetime.fromisoformat(task.deadline)
+            # Ensure deadline is at end of working day if only a date was given
+            if dl.hour == 0 and dl.minute == 0:
+                dl = dl.replace(
+                    hour=config.day_start_hour,
+                    minute=config.day_start_minute,
+                ) + timedelta(hours=config.hours_per_day)
+            lf[tid] = min(lf[tid], dl)
+
         ls[tid] = _subtract_working_hours(lf[tid], task.duration_hrs, config)
 
     # --- Build results ---
     results: list[ScheduledTask] = []
     for tid in topo_order:
         task = tasks[tid]
-        slack = _working_hours_between(ef[tid], lf[tid], config)
+        if ef[tid] <= lf[tid]:
+            slack = _working_hours_between(ef[tid], lf[tid], config)
+        else:
+            # Negative slack: task finishes after its latest allowed finish
+            slack = -_working_hours_between(lf[tid], ef[tid], config)
         results.append(
             ScheduledTask(
                 task=task,
@@ -297,7 +312,7 @@ def calculate_schedule(
                 earliest_finish=ef[tid],
                 latest_start=ls[tid],
                 latest_finish=lf[tid],
-                total_slack_hrs=max(0.0, round(slack, 2)),
+                total_slack_hrs=round(slack, 2),
             )
         )
 
