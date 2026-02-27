@@ -114,6 +114,7 @@ def add(
     deadline: Annotated[Optional[str], typer.Option(help="Deadline date (YYYY-MM-DD)")] = None,
     start: Annotated[Optional[str], typer.Option(help="Proposed start date (YYYY-MM-DD)")] = None,
     background: Annotated[bool, typer.Option("--bg", help="Task runs unattended (e.g. a pipeline)")] = False,
+    notes: Annotated[Optional[str], typer.Option(help="Markdown notes for the task")] = None,
 ) -> None:
     """Add a new task.
 
@@ -143,6 +144,7 @@ def add(
         deadline=deadline,
         proposed_start=start,
         background=background,
+        notes=notes,
     )
     store.save(config, tasks)
     console.print(f"[green]Added '{name}' as {tid}[/green]")
@@ -325,6 +327,7 @@ def update(
     background: Annotated[Optional[bool], typer.Option("--bg/--no-bg", help="Runs unattended (e.g. a pipeline)")] = None,
     add_dep: Annotated[Optional[list[str]], typer.Option("--add-dep", help="Add a dependency (task ID)")] = None,
     remove_dep: Annotated[Optional[list[str]], typer.Option("--remove-dep", help="Remove a dependency (task ID)")] = None,
+    notes: Annotated[Optional[str], typer.Option(help="Update markdown notes for the task")] = None,
 ) -> None:
     """Update fields of an existing task."""
     task_id = _parse_task_id(task_id)
@@ -345,6 +348,8 @@ def update(
         t.proposed_start = start
     if background is not None:
         t.background = background
+    if notes is not None:
+        t.notes = notes
 
     if add_dep:
         for dep in add_dep:
@@ -418,6 +423,11 @@ def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
         console.print(f"  Actual start:   {t.actual_start}")
     if t.actual_end:
         console.print(f"  Actual end:     {t.actual_end}")
+
+    if t.notes:
+        console.print("\n  [dim]── Notes ──[/dim]")
+        for line in t.notes.splitlines():
+            console.print(f"  {line}")
 
     # Show scheduled times if project is initialized
     if config:

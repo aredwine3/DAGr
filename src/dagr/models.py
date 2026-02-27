@@ -57,9 +57,10 @@ class Task:
     actual_start: str | None = None
     actual_end: str | None = None
     background: bool = False  # runs unattended; doesn't block the person
+    notes: str | None = None  # optional markdown notes
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "duration_hrs": self.duration_hrs,
             "depends_on": self.depends_on,
@@ -70,6 +71,9 @@ class Task:
             "actual_end": self.actual_end,
             "background": self.background,
         }
+        if self.notes is not None:
+            d["notes"] = self.notes
+        return d
 
     @classmethod
     def from_dict(cls, task_id: str, d: dict) -> Task:
@@ -84,4 +88,5 @@ class Task:
             actual_start=d.get("actual_start"),
             actual_end=d.get("actual_end"),
             background=d.get("background", False),
+            notes=d.get("notes"),
         )

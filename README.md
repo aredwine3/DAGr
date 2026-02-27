@@ -84,6 +84,7 @@ Each task gets an auto-generated ID (`T-1`, `T-2`, ...).
 - `--deadline 2026-03-02` — hard due date. Deadlines constrain the backward pass, so upstream tasks get reduced slack and may join the critical path. Tasks that overshoot their deadline show negative slack and are flagged LATE.
 - `--start 2026-02-25` — earliest date work can begin (e.g., waiting on access)
 - `--bg` — marks a task as **background** (runs unattended, like a compute pipeline)
+- `--notes "some text"` — attach markdown notes to a task (visible in `dagr show`)
 
 ### 3. View your schedule
 
@@ -207,6 +208,7 @@ Mark a task as background if it runs unattended:
 ```bash
 dagr update T-5 --bg       # mark as background
 dagr update T-5 --no-bg    # revert to attended
+dagr update T-6 --notes "Include executive summary and appendix"
 ```
 
 View all details for a specific task:
@@ -317,7 +319,7 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 | Command | Description |
 |---|---|
 | `dagr init` | Set project start date and working hours config |
-| `dagr add` | Add a new task (`-d`, `--depends`, `--deadline`, `--start`, `--bg`) |
+| `dagr add` | Add a new task (`-d`, `--depends`, `--deadline`, `--start`, `--bg`, `--notes`) |
 | `dagr list` | Show all tasks (`--status`, `--search` to filter) |
 | `dagr update <ID>` | Update task fields (`--add-dep`, `--remove-dep` for dependencies) |
 | `dagr delete <ID>` | Remove a task and clean up dependency references |
