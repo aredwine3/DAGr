@@ -435,7 +435,7 @@ def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
                     else:
                         console.print(f"  Slack:           {s.total_slack_hrs:.1f}h")
                     if s.is_critical:
-                        console.print(f"  [bold yellow]On the critical path[/bold yellow]")
+                        console.print("  [bold yellow]On the critical path[/bold yellow]")
                     if t.deadline:
                         dl = datetime.fromisoformat(t.deadline)
                         if s.earliest_finish > dl:
@@ -831,30 +831,18 @@ def next_task() -> None:
     config, tasks = store.load()
     config = _require_config(config)
 
-    # If something is already in progress, show that
+    # If a foreground task is already in progress, show that and return
     in_progress = [t for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS]
-    if in_progress:
-        for t in in_progress:
-            label = "[dim](BG)[/dim] " if t.background else ""
-            console.print(f"\n  [yellow]In progress:[/yellow]  {label}[bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
+    fg_in_progress = [t for t in in_progress if not t.background]
+    bg_in_progress = [t for t in in_progress if t.background]
+
+    if fg_in_progress:
+        for t in fg_in_progress:
+            console.print(f"\n  [yellow]In progress:[/yellow]  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
             if t.actual_start:
                 console.print(f"    Started: {t.actual_start}")
-        # Even with in-progress tasks, check for ready background tasks to kick off
-        if not any(t.background for t in in_progress):
-            try:
-                leveled = resource_level(tasks, config)
-            except ValueError:
-                leveled = []
-            for s in leveled:
-                if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
-                    continue
-                # Check all deps are done
-                if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
-                    console.print(f"\n  [dim]Kick off background job:[/dim]  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h)")
-                    if s.is_critical:
-                        console.print("    [bold yellow]On the critical path[/bold yellow]")
-                    console.print(f"    Run [bold]dagr start {s.task.id}[/bold]")
-                    break
+        for t in bg_in_progress:
+            console.print(f"\n  [dim]Running in background:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
         console.print()
         return
 
@@ -864,12 +852,14 @@ def next_task() -> None:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
-    # Show ready background tasks that should be kicked off
+    # Show background tasks that are running or ready to kick off
+    for t in bg_in_progress:
+        console.print(f"\n  [dim]Running in background:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
+
     bg_shown = False
     for s in leveled:
         if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
             continue
-        # Check all deps are done
         if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
             if not bg_shown:
                 console.print("\n  [dim]Kick off background job(s) first:[/dim]")
@@ -883,16 +873,20 @@ def next_task() -> None:
             continue
         if s.task.background:
             continue
-        console.print(f"\n  [green]Next up:[/green]")
+        console.print("\n  [green]Next up:[/green]")
         console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h)")
         console.print(f"  Projected start: {s.earliest_start.strftime('%a %b %d, %H:%M')}")
         if s.is_critical:
-            console.print(f"  [bold yellow]On the critical path[/bold yellow]")
+            console.print("  [bold yellow]On the critical path[/bold yellow]")
         console.print(f"\n  Run [bold]dagr start {s.task.id}[/bold] to begin.")
         console.print()
         return
 
-    console.print("[green]All tasks are done![/green]")
+    if not bg_in_progress:
+        console.print("[green]All tasks are done![/green]")
+    else:
+        console.print("\n  [green]All hands-on work is done! Waiting on background tasks.[/green]")
+    console.print()
 
 
 @app.command()
@@ -1041,7 +1035,8 @@ def today() -> None:
         console.print("\n  [dim]No tasks scheduled for today.[/dim]")
 
     # --- Next action ---
-    if not in_progress:
+    fg_in_progress = [t for t in in_progress if not t.background]
+    if not fg_in_progress:
         for s in leveled:
             if s.task.status == TaskStatus.DONE or s.task.background:
                 continue
