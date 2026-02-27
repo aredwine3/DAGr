@@ -80,8 +80,8 @@ dagr add "Write final report" --duration 6 --depends T-3,T-4,T-5 --deadline 2026
 
 Each task gets an auto-generated ID (`T-1`, `T-2`, ...).
 
-- `--depends T-1,T-2,T-3` — this task can't start until those finish (comma-separated or repeat the flag)
-- `--deadline 2026-03-02` — hard due date; flagged as LATE if the schedule overshoots it
+- `--depends T-1,T-2,T-3` — this task can't start until those finish (comma-separated or repeat the flag). Dependencies are validated at add time — a typo like `--depends T-l` will be caught immediately.
+- `--deadline 2026-03-02` — hard due date. Deadlines constrain the backward pass, so upstream tasks get reduced slack and may join the critical path. Tasks that overshoot their deadline show negative slack and are flagged LATE.
 - `--start 2026-02-25` — earliest date work can begin (e.g., waiting on access)
 - `--bg` — marks a task as **background** (runs unattended, like a compute pipeline)
 
@@ -93,8 +93,8 @@ dagr schedule
 
 Outputs a table showing each task's computed start/end times (respecting working hours and weekends), slack, and flags:
 
-- **CRITICAL** — on the critical path (zero slack; any delay here delays everything)
-- **LATE** — projected to finish after its deadline
+- **CRITICAL** — on the critical path (zero or negative slack; any delay here delays everything)
+- **LATE** — projected to finish after its deadline (shown with negative slack)
 
 ```
                               Schedule
@@ -167,6 +167,8 @@ These record actual timestamps. When you complete a task, DAGr shows how your ac
 Completed T-1 at 2026-02-24T15:30:00
   Estimated: 10.0h  Actual: 12.5h  +2.5h over
 ```
+
+If you skip `dagr start` and go straight to `dagr done`, DAGr warns you that actual time can't be measured (since there's no start timestamp to compare against).
 
 The scheduler uses real completion times for finished tasks instead of estimates, so downstream projections get more accurate as you go.
 
@@ -315,12 +317,13 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 | `dagr done <ID>` | Mark a task as completed (shows actual vs estimated time) |
 | `dagr reset <ID>` | Reset a task back to not_started (undo start/done) |
 | `dagr schedule` | Full schedule table (`--remaining` to hide done, `--csv` to export) |
-| `dagr critical-path` | Show only the critical path tasks and total duration |
+| `dagr critical-path` | Show critical path tasks (`--sort chrono`, `--sort chain`) |
 | `dagr status` | Project health dashboard (progress, deadlines, critical path) |
 | `dagr next` | Show the single next task you should work on |
 | `dagr today` | Morning briefing: status + today's tasks + what to do next |
 | `dagr daily` | Day-by-day plan, serialized for one person (`-n` for day count) |
 | `dagr viz` | Generate a Mermaid flowchart of the DAG (`-o`, `--hide-done`) |
+| `dagr viz-html` | Generate an interactive PyVis HTML flowchart (`-o`, `--hide-done`) |
 
 Run `dagr <command> --help` for detailed options on any command.
 
@@ -336,7 +339,11 @@ Time is measured in **working hours**, not wall-clock hours. A 10-hour task star
 
 ### Critical Path Analysis
 
-The scheduler runs a **forward pass** (earliest start/finish for each task) and a **backward pass** (latest start/finish without delaying the project). The difference is **slack** -- how much a task can slip without affecting the end date. Tasks with zero slack form the **critical path**: the longest chain of dependencies that determines total project duration.
+The scheduler runs a **forward pass** (earliest start/finish for each task) and a **backward pass** (latest start/finish without delaying the project). The difference is **slack** -- how much a task can slip without affecting the end date. Tasks with zero or negative slack form the **critical path**: the longest chain of dependencies that determines total project duration.
+
+**Deadlines constrain the backward pass.** When a task has a deadline, its latest finish is capped at that deadline, and the constraint propagates backward to all upstream tasks. This means tasks feeding into a deadline get reduced slack and may become critical even if they wouldn't be otherwise.
+
+**Negative slack** means a task chain is already behind its deadline. For example, `-3.0h` slack means you'd need to find 3 hours of savings to meet the deadline. Use `dagr critical-path --sort chain` to see independent critical chains grouped separately, or `--sort chrono` to sort by start time.
 
 ### Resource Leveling
 
@@ -353,9 +360,11 @@ Everything is stored in a single `dagr.json` file in the working directory. The 
 ## Visualize the DAG
 
 ```bash
-dagr viz                    # full DAG to dag.md
+dagr viz                    # full DAG to dag.md (Mermaid)
 dagr viz --hide-done        # only remaining tasks
 dagr viz -o my-graph.md     # custom output file
+dagr viz-html               # interactive HTML diagram (PyVis)
+dagr viz-html -o my-dag.html
 ```
 
 Color-coded nodes:
@@ -364,7 +373,7 @@ Color-coded nodes:
 - **Tan with thick border** -- critical path
 - **Blue** -- default
 
-Open the output file in VS Code and use Markdown Preview (`Cmd+Shift+V`) to render the Mermaid diagram. GitHub also renders Mermaid diagrams natively in markdown files.
+The Mermaid output (`dagr viz`) can be previewed in VS Code with Markdown Preview (`Cmd+Shift+V`) or rendered natively by GitHub. The HTML output (`dagr viz-html`) opens in any browser with interactive dragging and zooming.
 
 ## The Workflow
 
