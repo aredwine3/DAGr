@@ -526,6 +526,56 @@ def reset(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_i
     console.print(f"[green]Reset {task_id} from {old_status} to not_started.[/green]")
 
 
+@app.command("set-status")
+def set_status(
+    task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id)],
+    status: Annotated[str, typer.Argument(help="Target status: not_started, in_progress, done")],
+) -> None:
+    """Override a task's status directly.
+
+    Use this to correct status when the normal start/done/reset flow doesn't
+    fit — e.g. reopening a done task or pausing an in-progress one.
+    """
+    task_id = _parse_task_id(task_id)
+    try:
+        new_status = TaskStatus(status)
+    except ValueError:
+        valid = ", ".join(s.value for s in TaskStatus)
+        console.print(f"[red]Invalid status '{status}'. Valid statuses: {valid}[/red]")
+        raise typer.Exit(1)
+
+    store = _get_store()
+    config, tasks = store.load()
+    if task_id not in tasks:
+        console.print(f"[red]Task {task_id} not found.[/red]")
+        raise typer.Exit(1)
+
+    t = tasks[task_id]
+    old_status = t.status
+
+    if t.status == new_status:
+        console.print(f"{task_id} is already {new_status.value}.")
+        return
+
+    t.status = new_status
+
+    if new_status == TaskStatus.NOT_STARTED:
+        t.actual_start = None
+        t.actual_end = None
+    elif new_status == TaskStatus.IN_PROGRESS:
+        t.actual_end = None
+        if not t.actual_start:
+            t.actual_start = datetime.now().isoformat()
+    elif new_status == TaskStatus.DONE:
+        if not t.actual_end:
+            t.actual_end = datetime.now().isoformat()
+        if not t.actual_start:
+            t.actual_start = t.actual_end
+
+    store.save(config, tasks)
+    console.print(f"[green]Set {task_id} from {old_status.value} to {new_status.value}.[/green]")
+
+
 @app.command()
 def schedule(
     remaining: Annotated[bool, typer.Option("--remaining", "-r", help="Hide completed tasks")] = False,

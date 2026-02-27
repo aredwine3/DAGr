@@ -178,6 +178,15 @@ Made a mistake? Reset a task back to not-started:
 dagr reset T-1
 ```
 
+Need to reopen a completed task or pause one that's in progress? Use `set-status` to override a task's status directly:
+
+```bash
+dagr set-status T-1 in_progress   # reopen a done task (preserves actual_start)
+dagr set-status T-2 not_started   # pause an in-progress task (clears timestamps)
+```
+
+This is the escape hatch for when life doesn't follow the `start` → `done` happy path — e.g. you started T-2 but realized T-1 needs rework, so you need to reopen T-1 and pause T-2.
+
 ### 6. Adapt as things change
 
 Update a task's duration when reality doesn't match the estimate:
@@ -316,6 +325,7 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 | `dagr start <ID>` | Mark a task as in-progress (records timestamp) |
 | `dagr done <ID>` | Mark a task as completed (shows actual vs estimated time) |
 | `dagr reset <ID>` | Reset a task back to not_started (undo start/done) |
+| `dagr set-status <ID> <STATUS>` | Override a task's status directly (reopen, pause, etc.) |
 | `dagr schedule` | Full schedule table (`--remaining` to hide done, `--csv` to export) |
 | `dagr critical-path` | Show critical path tasks (`--sort chrono`, `--sort chain`) |
 | `dagr status` | Project health dashboard (progress, deadlines, critical path) |
