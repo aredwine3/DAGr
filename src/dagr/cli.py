@@ -586,6 +586,187 @@ def set_status(
     console.print(f"[green]Set {task_id} from {old_status.value} to {new_status.value}.[/green]")
 
 
+@app.command("import")
+def import_tasks(
+    file: Annotated[str, typer.Argument(help="JSON file path, or - for stdin")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview changes without saving")] = False,
+) -> None:
+    """Import tasks from a JSON file (or stdin with -).
+
+    The JSON should have a "tasks" array. Each task needs at minimum "name" and
+    "duration_hrs". Dependencies can reference existing task IDs (e.g. "T-5") or
+    names of other tasks in the same import batch.
+
+    To update an existing task, include its "id" field (e.g. "id": "T-5").
+
+    Example JSON:
+
+        {"tasks": [
+
+            {"name": "Design API", "duration_hrs": 4},
+
+            {"name": "Build API", "duration_hrs": 8, "depends_on": ["Design API"]}
+
+        ]}
+    """
+    import json
+    import sys
+
+    # Read input
+    if file == "-":
+        raw_text = sys.stdin.read()
+    else:
+        from pathlib import Path
+
+        path = Path(file)
+        if not path.exists():
+            console.print(f"[red]File not found: {file}[/red]")
+            raise typer.Exit(1)
+        raw_text = path.read_text()
+
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Invalid JSON: {e}[/red]")
+        raise typer.Exit(1)
+
+    if "tasks" not in data or not isinstance(data["tasks"], list):
+        console.print('[red]JSON must have a "tasks" array.[/red]')
+        raise typer.Exit(1)
+
+    store = _get_store()
+    config, tasks = store.load()
+
+    # Build name→ID lookup for existing tasks
+    existing_name_to_id: dict[str, str] = {}
+    for tid, t in tasks.items():
+        existing_name_to_id[t.name] = tid
+
+    # First pass: create/update tasks and build name→ID mapping for new tasks
+    added: list[str] = []
+    updated: list[str] = []
+    import_name_to_id: dict[str, str] = {}
+
+    for i, entry in enumerate(data["tasks"]):
+        if not isinstance(entry, dict):
+            console.print(f"[red]Task at index {i} is not an object.[/red]")
+            raise typer.Exit(1)
+
+        task_id = entry.get("id")
+
+        if task_id and task_id in tasks:
+            # Update mode
+            t = tasks[task_id]
+            if "name" in entry:
+                t.name = entry["name"]
+            if "duration_hrs" in entry:
+                t.duration_hrs = entry["duration_hrs"]
+            if "deadline" in entry:
+                t.deadline = entry["deadline"]
+            if "proposed_start" in entry:
+                t.proposed_start = entry["proposed_start"]
+            if "background" in entry:
+                t.background = entry["background"]
+            if "notes" in entry:
+                t.notes = entry["notes"]
+            # depends_on handled in second pass
+            import_name_to_id[t.name] = task_id
+            updated.append(task_id)
+        else:
+            # Create mode — validate required fields
+            if "name" not in entry:
+                console.print(f'[red]Task at index {i} missing required "name" field.[/red]')
+                raise typer.Exit(1)
+            if "duration_hrs" not in entry:
+                console.print(f'[red]Task "{entry["name"]}" missing required "duration_hrs" field.[/red]')
+                raise typer.Exit(1)
+
+            new_id = store.generate_id(tasks)
+            t = Task(
+                id=new_id,
+                name=entry["name"],
+                duration_hrs=entry["duration_hrs"],
+                deadline=entry.get("deadline"),
+                proposed_start=entry.get("proposed_start"),
+                background=entry.get("background", False),
+                notes=entry.get("notes"),
+            )
+            tasks[new_id] = t
+            import_name_to_id[t.name] = new_id
+            added.append(new_id)
+
+    # Second pass: resolve dependencies
+    for entry in data["tasks"]:
+        raw_deps = entry.get("depends_on", [])
+        if not raw_deps:
+            continue
+
+        # Find the task we created/updated for this entry
+        task_id = entry.get("id")
+        if not task_id or task_id not in tasks:
+            task_id = import_name_to_id.get(entry.get("name", ""))
+        if not task_id:
+            continue
+
+        resolved_deps: list[str] = []
+        for dep in raw_deps:
+            if dep in tasks:
+                # Direct task ID reference
+                resolved_deps.append(dep)
+            elif dep in import_name_to_id:
+                # Name of a task in this import batch
+                resolved_deps.append(import_name_to_id[dep])
+            elif dep in existing_name_to_id:
+                # Name of an existing task in the project
+                resolved_deps.append(existing_name_to_id[dep])
+            else:
+                console.print(f'[red]Task "{entry.get("name", task_id)}": unresolvable dependency "{dep}"[/red]')
+                raise typer.Exit(1)
+
+        t = tasks[task_id]
+        if task_id in updated:
+            # For updates, merge with existing deps
+            for d in resolved_deps:
+                if d not in t.depends_on:
+                    t.depends_on.append(d)
+        else:
+            t.depends_on = resolved_deps
+
+    # Dry run: show what would happen
+    if dry_run:
+        console.print("\n[bold]Dry run — no changes saved[/bold]\n")
+        if added:
+            console.print(f"[green]Would add {len(added)} task(s):[/green]")
+            for tid in added:
+                t = tasks[tid]
+                deps = f" → depends on {', '.join(t.depends_on)}" if t.depends_on else ""
+                console.print(f"  {tid}  {t.name}  ({t.duration_hrs:.1f}h){deps}")
+        if updated:
+            console.print(f"[yellow]Would update {len(updated)} task(s):[/yellow]")
+            for tid in updated:
+                t = tasks[tid]
+                console.print(f"  {tid}  {t.name}")
+        if not added and not updated:
+            console.print("[dim]Nothing to import.[/dim]")
+        console.print()
+        return
+
+    store.save(config, tasks)
+
+    if added:
+        console.print(f"[green]Added {len(added)} task(s):[/green]")
+        for tid in added:
+            t = tasks[tid]
+            console.print(f"  {tid}  {t.name}  ({t.duration_hrs:.1f}h)")
+    if updated:
+        console.print(f"[yellow]Updated {len(updated)} task(s):[/yellow]")
+        for tid in updated:
+            t = tasks[tid]
+            console.print(f"  {tid}  {t.name}")
+    if not added and not updated:
+        console.print("[dim]Nothing to import.[/dim]")
+
+
 @app.command()
 def schedule(
     remaining: Annotated[bool, typer.Option("--remaining", "-r", help="Hide completed tasks")] = False,

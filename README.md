@@ -242,7 +242,31 @@ dagr list --search "review"          # search by name
 dagr list -s done -q "pipeline"      # combine filters
 ```
 
-### 7. Check project health
+### 7. Bulk import tasks
+
+Got a list of tasks from a meeting, a planning doc, or an LLM? Import them all at once:
+
+```json
+{
+  "tasks": [
+    {"name": "Design API schema", "duration_hrs": 4},
+    {"name": "Implement endpoints", "duration_hrs": 8, "depends_on": ["Design API schema"]},
+    {"name": "Write tests", "duration_hrs": 3, "depends_on": ["Implement endpoints", "T-5"]}
+  ]
+}
+```
+
+```bash
+dagr import tasks.json                    # import from file
+cat tasks.json | dagr import -            # import from stdin
+dagr import tasks.json --dry-run          # preview without saving
+```
+
+Dependencies can reference existing task IDs (`T-5`) or names of other tasks in the same import batch (`Design API schema`). To update an existing task instead of creating a new one, include its `"id"` field.
+
+Each task supports all the usual fields: `depends_on`, `deadline`, `proposed_start`, `background`, `notes`.
+
+### 8. Check project health
 
 ```bash
 dagr status
@@ -264,7 +288,7 @@ Project Status
   Critical path: 4 tasks, 29.0h total
 ```
 
-### 8. Morning briefing
+### 9. Morning briefing
 
 ```bash
 dagr today
@@ -288,7 +312,7 @@ Today's schedule
   Run dagr start T-5 to begin.
 ```
 
-### 9. What should I work on?
+### 10. What should I work on?
 
 ```bash
 dagr next
@@ -307,7 +331,7 @@ Kick off background job(s) first:
   Run dagr start T-5 to begin.
 ```
 
-### 10. Export for sharing
+### 11. Export for sharing
 
 ```bash
 dagr schedule --csv schedule.csv           # full schedule to CSV
@@ -328,6 +352,7 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 | `dagr done <ID>` | Mark a task as completed (shows actual vs estimated time) |
 | `dagr reset <ID>` | Reset a task back to not_started (undo start/done) |
 | `dagr set-status <ID> <STATUS>` | Override a task's status directly (reopen, pause, etc.) |
+| `dagr import <FILE>` | Bulk import tasks from JSON (`-` for stdin, `--dry-run` to preview) |
 | `dagr schedule` | Full schedule table (`--remaining` to hide done, `--csv` to export) |
 | `dagr critical-path` | Show critical path tasks (`--sort chrono`, `--sort chain`) |
 | `dagr status` | Project health dashboard (progress, deadlines, critical path) |
