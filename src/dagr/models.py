@@ -57,6 +57,8 @@ class Task:
     actual_start: str | None = None
     actual_end: str | None = None
     background: bool = False  # runs unattended; doesn't block the person
+    project: str = "thesis"  # organizational tag (e.g., thesis, life, chores)
+    flexible: bool = False  # if true, tasks bypass normal critical path calculation
     notes: str | None = None  # optional markdown notes
 
     def to_dict(self) -> dict:
@@ -70,6 +72,8 @@ class Task:
             "actual_start": self.actual_start,
             "actual_end": self.actual_end,
             "background": self.background,
+            "project": self.project,
+            "flexible": self.flexible,
         }
         if self.notes is not None:
             d["notes"] = self.notes
@@ -88,5 +92,7 @@ class Task:
             actual_start=d.get("actual_start"),
             actual_end=d.get("actual_end"),
             background=d.get("background", False),
+            project=d.get("project", "thesis"),
+            flexible=d.get("flexible", False),
             notes=d.get("notes"),
         )

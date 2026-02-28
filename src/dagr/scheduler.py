@@ -357,9 +357,9 @@ def resource_level(
         if not ready:
             break  # shouldn't happen in a DAG, but guard anyway
 
-        # Schedule background tasks first — they don't consume the clock.
-        bg_ready = [tid for tid in ready if tasks[tid].background]
-        fg_ready = [tid for tid in ready if not tasks[tid].background]
+        # Schedule background and flexible tasks first — they don't consume the clock.
+        bg_ready = [tid for tid in ready if tasks[tid].background or tasks[tid].flexible]
+        fg_ready = [tid for tid in ready if not tasks[tid].background and not tasks[tid].flexible]
 
         for chosen in bg_ready:
             task = tasks[chosen]
@@ -379,7 +379,7 @@ def resource_level(
             else:
                 es[chosen] = calc_start
                 ef[chosen] = add_working_hours(calc_start, task.duration_hrs, config)
-            # Background tasks do NOT advance the clock.
+            # Background/flexible tasks do NOT advance the clock.
             remaining.remove(chosen)
 
         if not fg_ready:
@@ -412,10 +412,16 @@ def resource_level(
         clock = ef[chosen]
         remaining.remove(chosen)
 
-    # Build results, reusing unconstrained slack values.
+    # Build results, reusing unconstrained slack values. (Flexible tasks might have
+    # misleading unconstrained slack because they were included in the normal calculation;
+    # however, we preserve their times from the parallel resource leveling).
     results: list[ScheduledTask] = []
     for tid in nx.topological_sort(G):
         unc = unconstrained[tid]
+        
+        # Give flexible tasks infinite slack to visually distinguish them
+        slack = float('inf') if tasks[tid].flexible else unc.total_slack_hrs
+        
         results.append(
             ScheduledTask(
                 task=tasks[tid],
@@ -423,7 +429,7 @@ def resource_level(
                 earliest_finish=ef[tid],
                 latest_start=unc.latest_start,
                 latest_finish=unc.latest_finish,
-                total_slack_hrs=unc.total_slack_hrs,
+                total_slack_hrs=slack,
             )
         )
 

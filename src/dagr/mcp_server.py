@@ -83,6 +83,8 @@ def _task_to_dict(t: Task) -> dict:
         "depends_on": t.depends_on,
         "status": t.status.value,
         "background": t.background,
+        "project": t.project,
+        "flexible": t.flexible,
     }
     if t.deadline:
         d["deadline"] = t.deadline
@@ -125,6 +127,8 @@ def add_task(
     deadline: str | None = None,
     proposed_start: str | None = None,
     background: bool = False,
+    project: str = "thesis",
+    flexible: bool = False,
     notes: str | None = None,
 ) -> str:
     """Add a new task to the project.
@@ -136,6 +140,8 @@ def add_task(
         deadline: Hard deadline date (YYYY-MM-DD)
         proposed_start: Earliest start date (YYYY-MM-DD)
         background: True if task runs unattended (e.g. compute pipeline)
+        project: Organizational tag (e.g., thesis, life)
+        flexible: True if task bypasses normal critical path calculation
         notes: Markdown notes for the task
     """
     store = _get_store()
@@ -155,6 +161,8 @@ def add_task(
         deadline=deadline,
         proposed_start=proposed_start,
         background=background,
+        project=project,
+        flexible=flexible,
         notes=notes,
     )
     store.save(config, tasks)
@@ -169,6 +177,8 @@ def update_task(
     deadline: str | None = None,
     proposed_start: str | None = None,
     background: bool | None = None,
+    project: str | None = None,
+    flexible: bool | None = None,
     add_dep: list[str] | None = None,
     remove_dep: list[str] | None = None,
     notes: str | None = None,
@@ -182,6 +192,8 @@ def update_task(
         deadline: New deadline (YYYY-MM-DD)
         proposed_start: New proposed start date (YYYY-MM-DD)
         background: Whether task runs unattended
+        project: Organizational tag
+        flexible: Whether task bypasses normal critical path calculation
         add_dep: Task IDs to add as dependencies
         remove_dep: Task IDs to remove from dependencies
         notes: New markdown notes
@@ -202,6 +214,10 @@ def update_task(
         t.proposed_start = proposed_start
     if background is not None:
         t.background = background
+    if project is not None:
+        t.project = project
+    if flexible is not None:
+        t.flexible = flexible
     if notes is not None:
         t.notes = notes
 
@@ -368,7 +384,7 @@ def import_tasks(tasks_json: list[dict]) -> str:
 
         if task_id and task_id in tasks:
             t = tasks[task_id]
-            for field in ("name", "duration_hrs", "deadline", "proposed_start", "background", "notes"):
+            for field in ("name", "duration_hrs", "deadline", "proposed_start", "background", "project", "flexible", "notes"):
                 if field in entry:
                     setattr(t, field, entry[field])
             import_name_to_id[t.name] = task_id
@@ -387,6 +403,8 @@ def import_tasks(tasks_json: list[dict]) -> str:
                 deadline=entry.get("deadline"),
                 proposed_start=entry.get("proposed_start"),
                 background=entry.get("background", False),
+                project=entry.get("project", "thesis"),
+                flexible=entry.get("flexible", False),
                 notes=entry.get("notes"),
             )
             tasks[new_id] = t
@@ -595,9 +613,13 @@ def get_next_task() -> str:
     store = _get_store()
     config, tasks = _require_config(store)
 
+
+    # Don't include flexible or background tasks in the strict foreground path queue.
+    # But DO return flexible tasks dynamically in their own array if they are ready!
     in_progress = [t for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS]
-    fg_in_progress = [t for t in in_progress if not t.background]
+    fg_in_progress = [t for t in in_progress if not t.background and not t.flexible]
     bg_in_progress = [t for t in in_progress if t.background]
+    flex_in_progress = [t for t in in_progress if t.flexible]
 
     result: dict = {}
 
@@ -605,6 +627,12 @@ def get_next_task() -> str:
         result["background_running"] = [
             {"id": t.id, "name": t.name, "duration_hrs": t.duration_hrs}
             for t in bg_in_progress
+        ]
+
+    if flex_in_progress:
+        result["flexible_running"] = [
+            {"id": t.id, "name": t.name, "duration_hrs": t.duration_hrs, "project": t.project}
+            for t in flex_in_progress
         ]
 
     if fg_in_progress:
@@ -630,9 +658,22 @@ def get_next_task() -> str:
     if bg_ready:
         result["background_ready"] = bg_ready
 
+    # Flexible tasks ready to kick off
+    flex_ready = []
+    for s in leveled:
+        if s.task.status != TaskStatus.NOT_STARTED or not s.task.flexible:
+            continue
+        if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
+            flex_ready.append({
+                "id": s.task.id, "name": s.task.name, "project": s.task.project,
+                "duration_hrs": s.task.duration_hrs,
+            })
+    if flex_ready:
+        result["flexible_ready"] = flex_ready
+
     # Next foreground task
     for s in leveled:
-        if s.task.status == TaskStatus.DONE or s.task.background:
+        if s.task.status == TaskStatus.DONE or s.task.background or s.task.flexible:
             continue
         result["next_task"] = {
             "id": s.task.id,
@@ -643,7 +684,7 @@ def get_next_task() -> str:
         }
         break
     else:
-        if not bg_in_progress:
+        if not bg_in_progress and not flex_in_progress:
             result["all_done"] = True
         else:
             result["all_foreground_done"] = True

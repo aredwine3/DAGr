@@ -114,6 +114,8 @@ def add(
     deadline: Annotated[Optional[str], typer.Option(help="Deadline date (YYYY-MM-DD)")] = None,
     start: Annotated[Optional[str], typer.Option(help="Proposed start date (YYYY-MM-DD)")] = None,
     background: Annotated[bool, typer.Option("--bg", help="Task runs unattended (e.g. a pipeline)")] = False,
+    project: Annotated[str, typer.Option("--project", "-p", help="Organizational tag (e.g., thesis, life)")] = "thesis",
+    flexible: Annotated[bool, typer.Option("--flexible", "--flex", help="Bypasses normal critical path calculation")] = False,
     notes: Annotated[Optional[str], typer.Option(help="Markdown notes for the task")] = None,
 ) -> None:
     """Add a new task.
@@ -144,6 +146,8 @@ def add(
         deadline=deadline,
         proposed_start=start,
         background=background,
+        project=project,
+        flexible=flexible,
         notes=notes,
     )
     store.save(config, tasks)
@@ -154,6 +158,7 @@ def add(
 def list_tasks(
     status_filter: Annotated[Optional[str], typer.Option("--status", "-s", help="Filter by status (not_started, in_progress, done)")] = None,
     search: Annotated[Optional[str], typer.Option("--search", "-q", help="Filter by name (case-insensitive substring match)")] = None,
+    project: Annotated[Optional[str], typer.Option("--project", "-p", help="Filter by project")] = None,
     csv: Annotated[Optional[str], typer.Option("--csv", help="Export list to CSV file")] = None,
 ) -> None:
     """List all tasks and their status."""
@@ -176,6 +181,10 @@ def list_tasks(
     if search:
         q = search.lower()
         filtered = [t for t in filtered if q in t.name.lower() or q in t.id.lower()]
+
+    if project:
+        p = project.lower()
+        filtered = [t for t in filtered if t.project.lower() == p]
 
     if not filtered:
         console.print("No tasks match the filter.")
@@ -205,7 +214,7 @@ def list_tasks(
         with Path(csv).open("w", newline="") as f:
             writer = csv_mod.writer(f)
             writer.writerow([
-                "ID", "Name", "Hours", "Depends On", "Status", "BG",
+                "ID", "Name", "Project", "Hours", "Depends On", "Status", "BG",
                 "Projected Start", "Projected Finish", "Slack (h)", "Deadline", "Flags"
             ])
             for t in filtered:
@@ -232,12 +241,16 @@ def list_tasks(
                     p_start = l_sched.earliest_start.strftime("%Y-%m-%d %H:%M")
                     p_finish = l_sched.earliest_finish.strftime("%Y-%m-%d %H:%M")
 
+                if t.flexible:
+                    flags.append("FLEX")
+
                 if flags:
                     flags_str = " | ".join(flags)
 
                 writer.writerow([
                     t.id,
                     t.name,
+                    t.project,
                     f"{t.duration_hrs:.1f}",
                     ", ".join(t.depends_on) or "",
                     t.status.value,
@@ -254,6 +267,7 @@ def list_tasks(
     table = Table(title="Tasks")
     table.add_column("ID")
     table.add_column("Name")
+    table.add_column("Project")
     table.add_column("Hours")
     table.add_column("Depends On")
     table.add_column("Status")
@@ -294,12 +308,16 @@ def list_tasks(
             p_start = l_sched.earliest_start.strftime("%b %d, %H:%M")
             p_finish = l_sched.earliest_finish.strftime("%b %d, %H:%M")
 
+        if t.flexible:
+            flags.append("FLEX")
+
         if flags:
             flags_str = " | ".join(flags)
 
         table.add_row(
             t.id,
             t.name,
+            t.project,
             f"{t.duration_hrs:.1f}",
             ", ".join(t.depends_on) or "-",
             t.status.value,
@@ -325,6 +343,8 @@ def update(
     deadline: Annotated[Optional[str], typer.Option(help="New deadline (YYYY-MM-DD)")] = None,
     start: Annotated[Optional[str], typer.Option(help="New proposed start (YYYY-MM-DD)")] = None,
     background: Annotated[Optional[bool], typer.Option("--bg/--no-bg", help="Runs unattended (e.g. a pipeline)")] = None,
+    project: Annotated[Optional[str], typer.Option("--project", "-p", help="Organizational tag (e.g., thesis, life)")] = None,
+    flexible: Annotated[Optional[bool], typer.Option("--flexible/--no-flexible", "--flex/--no-flex", help="Bypasses normal critical path calculation")] = None,
     add_dep: Annotated[Optional[list[str]], typer.Option("--add-dep", help="Add a dependency (task ID)")] = None,
     remove_dep: Annotated[Optional[list[str]], typer.Option("--remove-dep", help="Remove a dependency (task ID)")] = None,
     notes: Annotated[Optional[str], typer.Option(help="Update markdown notes for the task")] = None,
@@ -348,6 +368,10 @@ def update(
         t.proposed_start = start
     if background is not None:
         t.background = background
+    if project is not None:
+        t.project = project
+    if flexible is not None:
+        t.flexible = flexible
     if notes is not None:
         t.notes = notes
 
@@ -667,6 +691,10 @@ def import_tasks(
                 t.proposed_start = entry["proposed_start"]
             if "background" in entry:
                 t.background = entry["background"]
+            if "project" in entry:
+                t.project = entry["project"]
+            if "flexible" in entry:
+                t.flexible = entry["flexible"]
             if "notes" in entry:
                 t.notes = entry["notes"]
             # depends_on handled in second pass
@@ -689,6 +717,8 @@ def import_tasks(
                 deadline=entry.get("deadline"),
                 proposed_start=entry.get("proposed_start"),
                 background=entry.get("background", False),
+                project=entry.get("project", "thesis"),
+                flexible=entry.get("flexible", False),
                 notes=entry.get("notes"),
             )
             tasks[new_id] = t
@@ -1024,8 +1054,9 @@ def next_task() -> None:
 
     # If a foreground task is already in progress, show that and return
     in_progress = [t for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS]
-    fg_in_progress = [t for t in in_progress if not t.background]
+    fg_in_progress = [t for t in in_progress if not t.background and not t.flexible]
     bg_in_progress = [t for t in in_progress if t.background]
+    flex_in_progress = [t for t in in_progress if t.flexible]
 
     if fg_in_progress:
         for t in fg_in_progress:
@@ -1034,6 +1065,8 @@ def next_task() -> None:
                 console.print(f"    Started: {t.actual_start}")
         for t in bg_in_progress:
             console.print(f"\n  [dim]Running in background:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
+        for t in flex_in_progress:
+            console.print(f"\n  [dim]Flexible task in progress:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.project})")
         console.print()
         return
 
@@ -1046,23 +1079,32 @@ def next_task() -> None:
     # Show background tasks that are running or ready to kick off
     for t in bg_in_progress:
         console.print(f"\n  [dim]Running in background:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h)")
+    for t in flex_in_progress:
+        console.print(f"\n  [dim]Flexible task in progress:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.project})")
 
     bg_shown = False
+    flex_shown = False
     for s in leveled:
-        if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
+        if s.task.status != TaskStatus.NOT_STARTED:
             continue
         if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
-            if not bg_shown:
-                console.print("\n  [dim]Kick off background job(s) first:[/dim]")
-                bg_shown = True
-            crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.is_critical else ""
-            console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+            if s.task.background:
+                if not bg_shown:
+                    console.print("\n  [dim]Kick off background job(s) first:[/dim]")
+                    bg_shown = True
+                crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.is_critical else ""
+                console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+            elif s.task.flexible:
+                if not flex_shown:
+                    console.print("\n  [dim]Flexible / Side Tasks Ready:[/dim]")
+                    flex_shown = True
+                console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.project})[/dim]")
 
     # Find the next foreground task
     for s in leveled:
         if s.task.status == TaskStatus.DONE:
             continue
-        if s.task.background:
+        if s.task.background or s.task.flexible:
             continue
         console.print("\n  [green]Next up:[/green]")
         console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h)")
@@ -1133,27 +1175,40 @@ def today() -> None:
     if late_tasks:
         console.print(f"\n  [bold red]⚠ {len(late_tasks)} task(s) at risk of being late[/bold red]")
 
-    # --- In-progress tasks ---
     in_progress = [t for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS]
     if in_progress:
         console.print(f"\n[bold underline]In progress[/bold underline]")
         for t in in_progress:
-            label = " [dim](BG)[/dim]" if t.background else ""
+            label = ""
+            if t.background: label += " [dim](BG)[/dim]"
+            if t.flexible: label += " [dim](FLEX)[/dim]"
+            
             console.print(f"  [bold]{t.id}[/bold]  {t.name}  ({t.duration_hrs:.1f}h){label}")
 
-    # --- Background tasks to kick off ---
+    # --- Background and Flexible tasks to kick off ---
     crit_ids = {s.task.id for s in get_critical_path(scheduled)}
     bg_ready = []
+    flex_ready = []
+    
     for s in leveled:
-        if s.task.status != TaskStatus.NOT_STARTED or not s.task.background:
+        if s.task.status != TaskStatus.NOT_STARTED:
             continue
         if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
-            bg_ready.append(s)
+            if s.task.background:
+                bg_ready.append(s)
+            elif s.task.flexible:
+                flex_ready.append(s)
+                
     if bg_ready:
         console.print(f"\n[bold underline]Kick off background jobs[/bold underline]")
         for s in bg_ready:
             crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.task.id in crit_ids else ""
             console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+            
+    if flex_ready:
+        console.print(f"\n[bold underline]Flexible / Side Tasks Ready[/bold underline]")
+        for s in flex_ready:
+            console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.project})[/dim]")
 
     # --- Today's tasks (from resource-leveled schedule) ---
     now = datetime.now()
@@ -1190,6 +1245,7 @@ def today() -> None:
                     "time": f"{block_start.strftime('%H:%M')}-{block_end.strftime('%H:%M')}",
                     "critical": s.task.id in crit_ids,
                     "bg": s.task.background,
+                    "flexible": s.task.flexible,
                 })
                 remaining -= hours_today
 
@@ -1220,16 +1276,17 @@ def today() -> None:
                 flags.append("[bold yellow]CRIT[/bold yellow]")
             if e["bg"]:
                 flags.append("[dim]BG[/dim]")
+            if e["flexible"]:
+                flags.append("[dim]FLEX[/dim]")
             table.add_row(e["time"], e["id"], e["name"], f"{e['hours']:.1f}h", " ".join(flags))
         console.print(table)
     else:
         console.print("\n  [dim]No tasks scheduled for today.[/dim]")
 
-    # --- Next action ---
-    fg_in_progress = [t for t in in_progress if not t.background]
+    fg_in_progress = [t for t in in_progress if not t.background and not t.flexible]
     if not fg_in_progress:
         for s in leveled:
-            if s.task.status == TaskStatus.DONE or s.task.background:
+            if s.task.status == TaskStatus.DONE or s.task.background or s.task.flexible:
                 continue
             console.print(f"\n  Run [bold]dagr start {s.task.id}[/bold] to begin.")
             break
@@ -1338,6 +1395,8 @@ def daily(
                 flags.append("[bold yellow]CRIT[/bold yellow]")
             if e["bg"]:
                 flags.append("[dim]BG[/dim]")
+            if e["flexible"]:
+                flags.append("[dim]FLEX[/dim]")
             table.add_row(e["time"], e["id"], e["name"], f"{e['hours']:.1f}h", " ".join(flags))
 
         console.print(table)
