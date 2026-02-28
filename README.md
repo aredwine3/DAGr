@@ -413,6 +413,8 @@ The scheduler runs a **forward pass** (earliest start/finish for each task) and 
 
 **Negative slack** means a task chain is already behind its deadline. For example, `-3.0h` slack means you'd need to find 3 hours of savings to meet the deadline. Use `dagr critical-path --sort chain` to see independent critical chains grouped separately, or `--sort chrono` to sort by start time.
 
+**Multiple Critical Paths**: DAGr natively handles multiple parallel projects (like a thesis vs. remodeling a bedroom) because the "critical path" is just any task chain with zero or negative slack. If you give independent goals hard deadlines, they will form separate critical paths that dynamically compete for your time. The scheduler evaluates all active paths simultaneously and will auto-switch your focus to whichever project's deadline makes it the most urgent off that day.
+
 ### Resource Leveling
 
 `dagr schedule` shows the *unconstrained* schedule (unlimited parallelism), useful for slack and critical path analysis. `dagr daily` applies **resource leveling** for a single person: independent tasks are serialized, with the most critical (lowest slack) task scheduled first. Background tasks bypass this constraint and run in parallel.
