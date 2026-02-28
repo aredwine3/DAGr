@@ -10,3 +10,13 @@ settings.json
 import_tasks.py
 dag*.md
 planning*.md
+thesis_schedule.csv
+lib/bindings/utils.js
+lib/tom-select/tom-select.complete.min.js
+lib/tom-select/tom-select.css
+lib/vis-9.1.2/vis-network.css
+lib/vis-9.1.2/vis-network.min.js
+schedule.html
+.gitignore
+dag.html
+dagr.json.bak
