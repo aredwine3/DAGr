@@ -1095,6 +1095,7 @@ def next_task() -> None:
 
     try:
         leveled = resource_level(tasks, config)
+        leveled.sort(key=lambda x: (x.earliest_start, x.total_slack_hrs))
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)

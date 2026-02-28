@@ -367,6 +367,15 @@ def resource_level(
     remaining = set(tasks.keys())
     clock = max(config.start_date, now)
 
+    # Pre-process DONE tasks so they don't artificially block dependent tasks
+    # in the while loop from being ready on the first iteration.
+    for tid in list(remaining):
+        task = tasks[tid]
+        if task.status == TaskStatus.DONE and task.actual_start and task.actual_end:
+            es[tid] = datetime.fromisoformat(task.actual_start)
+            ef[tid] = datetime.fromisoformat(task.actual_end)
+            remaining.remove(tid)
+
     while remaining:
         # A task is *ready* when all its predecessors are finished.
         ready = [
@@ -415,13 +424,6 @@ def resource_level(
 
         if task.proposed_start:
             calc_start = max(calc_start, datetime.fromisoformat(task.proposed_start))
-
-        # Done tasks keep actual times
-        if task.status == TaskStatus.DONE and task.actual_start and task.actual_end:
-            es[chosen] = datetime.fromisoformat(task.actual_start)
-            ef[chosen] = datetime.fromisoformat(task.actual_end)
-            remaining.remove(chosen)
-            continue
 
         if task.status == TaskStatus.IN_PROGRESS and task.actual_start:
             calc_start = max(calc_start, datetime.fromisoformat(task.actual_start))

@@ -668,6 +668,7 @@ def get_next_task() -> str:
         return json.dumps(result, indent=2)
 
     leveled = resource_level(tasks, config)
+    leveled.sort(key=lambda x: (x.earliest_start, x.total_slack_hrs))
 
     # Background tasks ready to kick off
     bg_ready = []
