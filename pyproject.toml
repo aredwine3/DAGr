@@ -5,13 +5,16 @@ description = "Thesis timeline optimizer using DAG-based scheduling"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "mcp>=1.0",
     "networkx>=3.4",
     "pandas>=2.2",
+    "rich>=14.3.3",
     "typer>=0.15",
 ]
 
 [project.scripts]
 dagr = "dagr.cli:app"
+dagr-mcp = "dagr.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]

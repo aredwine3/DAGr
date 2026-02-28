@@ -47,6 +47,7 @@ source = { editable = "." }
 dependencies = [
     { name = "networkx" },
     { name = "pandas" },
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -54,6 +55,7 @@ dependencies = [
 requires-dist = [
     { name = "networkx", specifier = ">=3.4" },
     { name = "pandas", specifier = ">=2.2" },
+    { name = "rich", specifier = ">=14.3.3" },
     { name = "typer", specifier = ">=0.15" },
 ]
 

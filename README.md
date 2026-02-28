@@ -412,6 +412,53 @@ Color-coded nodes:
 
 The Mermaid output (`dagr viz`) can be previewed in VS Code with Markdown Preview (`Cmd+Shift+V`) or rendered natively by GitHub. The HTML output (`dagr viz-html`) opens in any browser with interactive dragging and zooming.
 
+## MCP Server (AI Integration)
+
+DAGr includes an MCP (Model Context Protocol) server that lets AI assistants like Claude Code, Claude Desktop, or Cursor manage your tasks directly in conversation.
+
+### Setup
+
+```bash
+# Install with MCP support
+uv pip install -e .
+
+# Register with Claude Code
+claude mcp add dagr -- dagr-mcp
+```
+
+Or without installing globally:
+
+```bash
+claude mcp add dagr -- uv run --directory /path/to/DAGr dagr-mcp
+```
+
+### What it enables
+
+Once registered, your AI assistant can:
+
+- **"Here are my meeting notes, add the tasks to DAGr"** -- the AI creates tasks directly
+- **"What should I work on?"** -- the AI checks your schedule and gives context-aware advice
+- **"I finished T-21, mark it done"** -- status updates mid-conversation
+- **"How's my project looking?"** -- the AI reads your dashboard and reasons about your timeline
+
+### Available tools
+
+| Tool | Description |
+|------|-------------|
+| `add_task` | Create a new task |
+| `update_task` | Modify task fields |
+| `delete_task` | Remove a task |
+| `start_task` | Mark as in-progress |
+| `complete_task` | Mark as done |
+| `set_task_status` | Override status directly |
+| `import_tasks` | Bulk add/update tasks |
+| `get_task` | Details for one task |
+| `list_tasks` | List with optional filters |
+| `get_schedule` | Full schedule with slack/critical path |
+| `get_status` | Project health dashboard |
+| `get_next_task` | What to work on next |
+| `get_critical_path` | Critical path analysis |
+
 ## The Workflow
 
 1. **Brain dump** -- Add all your tasks with rough hour estimates
