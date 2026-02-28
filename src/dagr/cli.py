@@ -1420,6 +1420,7 @@ def daily(
                     "time": f"{block_start.strftime('%H:%M')}-{block_end.strftime('%H:%M')}",
                     "critical": s.task.id in crit_ids,
                     "bg": s.task.background,
+                    "flexible": s.task.flexible,
                 })
                 remaining -= hours_today
 
