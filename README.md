@@ -86,6 +86,7 @@ Each task gets an auto-generated ID (`T-1`, `T-2`, ...).
 - `--bg` — marks a task as **background** (runs unattended, like a compute pipeline)
 - `--project life` — categorizes the task (defaults to `thesis`)
 - `--flex` — marks a task as **flexible**. Flexible tasks bypass the constraints of the normal critical path calculation and run parallel to the schedule without delaying your project timeline. Perfect for chores or side-quests.
+- `--tag errands` — add context tags (like energy levels or categories). Can provide multiple tags.
 - `--notes "some text"` — attach markdown notes to a task (visible in `dagr show`)
 
 ### 3. View your schedule
@@ -243,6 +244,7 @@ dagr list --status not_started       # only not-started tasks
 dagr list --search "review"          # search by name
 dagr list -s done -q "pipeline"      # combine filters
 dagr list --project life             # show flexible/side tasks only
+dagr list --tag low-energy           # filter by context tag
 ```
 
 ### 7. Bulk import tasks
@@ -315,7 +317,7 @@ Today's schedule
   Run dagr start T-5 to begin.
 ```
 
-### 10. What should I work on?
+### 10. What should I work on? (The Dopamine Menu)
 
 ```bash
 dagr next
@@ -323,18 +325,43 @@ dagr next
 
 Shows the single most important task to work on right now (lowest slack, highest urgency). Also surfaces any background jobs that are ready to kick off. If a task is already in progress, it reminds you of that instead.
 
+Critically, if you have **flexible tasks** (tagged with `--flex`) that are ready, `dagr next` will also serve a **⚡ Dopamine Menu**. This organizes alternative, low-friction tasks into explicit categories based on their tags or duration:
+- **🏃 Quick Wins**: Tasks < 1 hour or tagged `quick`.
+- **🔋 Low Energy**: Tasks tagged `low-energy` or `braindead`.
+- **🧠 Hyperfocus**: Tasks tagged `hyperfocus` or `deep-work`.
+- **🗺️ Other Side Quests**: All other flexible tasks.
+
 ```
 Kick off background job(s) first:
   T-1  Data pipeline  (10.0h)  CRIT
 
-  Next up:
+  ⚡ Dopamine Menu (Flexible Tasks)
+
+  🏃 Quick Wins
+    T-14  Respond to email  (0.2h, life)
+  
+  🔋 Low Energy
+    T-90  Laundry           (1.0h, chores)
+
+  Next up (Critical Path):
   T-5  Code review  (8.0h)
   Projected start: Mon Feb 23, 09:00
 
   Run dagr start T-5 to begin.
 ```
 
-### 11. Export for sharing
+### 11. Elastic Days
+
+Life happens. Need a day off, or plan to hyperfocus and squeeze in extra hours? You can override your default working hours for any specific date using `dagr capacity`:
+
+```bash
+dagr capacity 2026-03-05 0.0    # Take the day off (0 hours)
+dagr capacity 2026-03-06 12.0   # Plan a 12-hour hyperfocus session
+```
+
+The scheduler (and all commands like `dagr today` and `dagr daily`) will automatically adjust and flow your tasks through these custom capacity days. Even if you configured the project to skip weekends, you can still add capacity to a Saturday to schedule catch-up work!
+
+### 12. Export for sharing
 
 ```bash
 dagr schedule --csv schedule.csv           # full schedule to CSV
@@ -362,6 +389,7 @@ dagr schedule --remaining --csv todo.csv   # only remaining tasks
 | `dagr next` | Show the single next task you should work on |
 | `dagr today` | Morning briefing: status + today's tasks + what to do next |
 | `dagr daily` | Day-by-day plan, serialized for one person (`-n` for day count) |
+| `dagr capacity <DATE> <HOURS>` | Override working hours for a specific day |
 | `dagr viz` | Generate a Mermaid flowchart of the DAG (`-o`, `--hide-done`) |
 | `dagr viz-html` | Generate an interactive PyVis HTML flowchart (`-o`, `--hide-done`) |
 

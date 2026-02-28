@@ -116,6 +116,7 @@ def add(
     background: Annotated[bool, typer.Option("--bg", help="Task runs unattended (e.g. a pipeline)")] = False,
     project: Annotated[str, typer.Option("--project", "-p", help="Organizational tag (e.g., thesis, life)")] = "thesis",
     flexible: Annotated[bool, typer.Option("--flexible", "--flex", help="Bypasses normal critical path calculation")] = False,
+    tags: Annotated[Optional[list[str]], typer.Option("--tag", "-t", help="Context tags (e.g. low-energy)")] = None,
     notes: Annotated[Optional[str], typer.Option(help="Markdown notes for the task")] = None,
 ) -> None:
     """Add a new task.
@@ -148,6 +149,7 @@ def add(
         background=background,
         project=project,
         flexible=flexible,
+        tags=tags or [],
         notes=notes,
     )
     store.save(config, tasks)
@@ -159,6 +161,7 @@ def list_tasks(
     status_filter: Annotated[Optional[str], typer.Option("--status", "-s", help="Filter by status (not_started, in_progress, done)")] = None,
     search: Annotated[Optional[str], typer.Option("--search", "-q", help="Filter by name (case-insensitive substring match)")] = None,
     project: Annotated[Optional[str], typer.Option("--project", "-p", help="Filter by project")] = None,
+    tag: Annotated[Optional[str], typer.Option("--tag", "-t", help="Filter by tag")] = None,
     csv: Annotated[Optional[str], typer.Option("--csv", help="Export list to CSV file")] = None,
 ) -> None:
     """List all tasks and their status."""
@@ -185,6 +188,10 @@ def list_tasks(
     if project:
         p = project.lower()
         filtered = [t for t in filtered if t.project.lower() == p]
+
+    if tag:
+        qt = tag.lower()
+        filtered = [t for t in filtered if any(qt == tg.lower() for tg in t.tags)]
 
     if not filtered:
         console.print("No tasks match the filter.")
@@ -347,6 +354,8 @@ def update(
     flexible: Annotated[Optional[bool], typer.Option("--flexible/--no-flexible", "--flex/--no-flex", help="Bypasses normal critical path calculation")] = None,
     add_dep: Annotated[Optional[list[str]], typer.Option("--add-dep", help="Add a dependency (task ID)")] = None,
     remove_dep: Annotated[Optional[list[str]], typer.Option("--remove-dep", help="Remove a dependency (task ID)")] = None,
+    add_tag: Annotated[Optional[list[str]], typer.Option("--add-tag", help="Add a tag to the task")] = None,
+    remove_tag: Annotated[Optional[list[str]], typer.Option("--remove-tag", help="Remove a tag from the task")] = None,
     notes: Annotated[Optional[str], typer.Option(help="Update markdown notes for the task")] = None,
 ) -> None:
     """Update fields of an existing task."""
@@ -393,6 +402,16 @@ def update(
             else:
                 console.print(f"[yellow]{task_id} does not depend on {dep}, skipping.[/yellow]")
 
+    if add_tag:
+        for tg in add_tag:
+            if tg not in t.tags:
+                t.tags.append(tg)
+
+    if remove_tag:
+        for tg in remove_tag:
+            if tg in t.tags:
+                t.tags.remove(tg)
+
     store.save(config, tasks)
     console.print(f"[green]Updated {task_id}.[/green]")
 
@@ -432,6 +451,10 @@ def show(task_id: Annotated[str, typer.Argument(autocompletion=_complete_task_id
     console.print(f"\n[bold]{t.id}[/bold]  {t.name}")
     console.print(f"  Status:     {t.status.value}")
     console.print(f"  Duration:   {t.duration_hrs:.1f}h")
+    console.print(f"  Project:    {t.project}")
+    console.print(f"  Flexible:   {'yes' if t.flexible else 'no'}")
+    if t.tags:
+        console.print(f"  Tags:       {', '.join(t.tags)}")
     console.print(f"  Background: {'yes' if t.background else 'no'}")
     console.print(f"  Depends on: {', '.join(t.depends_on) or 'none'}")
 
@@ -1082,23 +1105,62 @@ def next_task() -> None:
     for t in flex_in_progress:
         console.print(f"\n  [dim]Flexible task in progress:[/dim]  [bold]{t.id}[/bold]  {t.name}  ({t.project})")
 
-    bg_shown = False
-    flex_shown = False
+    ready_bg = []
+    ready_flex = []
+
     for s in leveled:
         if s.task.status != TaskStatus.NOT_STARTED:
             continue
         if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
             if s.task.background:
-                if not bg_shown:
-                    console.print("\n  [dim]Kick off background job(s) first:[/dim]")
-                    bg_shown = True
-                crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.is_critical else ""
-                console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+                ready_bg.append(s)
             elif s.task.flexible:
-                if not flex_shown:
-                    console.print("\n  [dim]Flexible / Side Tasks Ready:[/dim]")
-                    flex_shown = True
-                console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.project})[/dim]")
+                ready_flex.append(s)
+
+    if ready_bg:
+        console.print("\n  [dim]Kick off background job(s) first:[/dim]")
+        for s in ready_bg:
+            crit_flag = "  [bold yellow]CRIT[/bold yellow]" if s.is_critical else ""
+            console.print(f"  [bold]{s.task.id}[/bold]  {s.task.name}  ({s.task.duration_hrs:.1f}h){crit_flag}")
+
+    if ready_flex:
+        quick_wins = []
+        low_energy = []
+        hyperfocus = []
+        others = []
+
+        for s in ready_flex:
+            tags_lower = set(t.lower() for t in s.task.tags)
+            if s.task.duration_hrs < 1.0 or "quick" in tags_lower:
+                quick_wins.append(s)
+            elif "low-energy" in tags_lower or "braindead" in tags_lower:
+                low_energy.append(s)
+            elif "hyperfocus" in tags_lower or "deep-work" in tags_lower:
+                hyperfocus.append(s)
+            else:
+                others.append(s)
+
+        console.print("\n  [bold cyan]⚡ Dopamine Menu (Flexible Tasks)[/bold cyan]")
+        
+        if quick_wins:
+            console.print("\n  [bold]🏃 Quick Wins[/bold]")
+            for s in quick_wins:
+                console.print(f"    [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.duration_hrs:.1f}h, {s.task.project})[/dim]")
+                
+        if low_energy:
+            console.print("\n  [bold]🔋 Low Energy[/bold]")
+            for s in low_energy:
+                console.print(f"    [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.duration_hrs:.1f}h, {s.task.project})[/dim]")
+                
+        if hyperfocus:
+            console.print("\n  [bold]🧠 Hyperfocus[/bold]")
+            for s in hyperfocus:
+                console.print(f"    [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.duration_hrs:.1f}h, {s.task.project})[/dim]")
+                
+        if others:
+            console.print("\n  [bold]🗺️  Other Side Quests[/bold]")
+            for s in others:
+                console.print(f"    [bold]{s.task.id}[/bold]  {s.task.name}  [dim]({s.task.duration_hrs:.1f}h, {s.task.project})[/dim]")
 
     # Find the next foreground task
     for s in leveled:
@@ -1593,3 +1655,26 @@ def viz_html(
 
     net.save_graph(output)
     console.print(f"[green]Wrote structured, interactive HTML diagram to {output}[/green]")
+
+@app.command()
+def capacity(
+    date_str: Annotated[str, typer.Argument(help="Date in YYYY-MM-DD format (e.g. 2026-03-05)")],
+    hours: Annotated[float, typer.Argument(help="Working hours capacity for this date")],
+) -> None:
+    """Set the working hour capacity for a specific day."""
+    store = _get_store()
+    config, tasks = store.load()
+    config = _require_config(config)
+
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        console.print(f"[red]Invalid date format '{date_str}'. Use YYYY-MM-DD.[/red]")
+        raise typer.Exit(1)
+
+    config.capacity_overrides[date_str] = hours
+    store.save(config, tasks)
+    console.print(f"[green]Set capacity for {date_str} to {hours} hours.[/green]")
+
+if __name__ == "__main__":
+    app()

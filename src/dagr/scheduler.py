@@ -45,6 +45,15 @@ def build_dag(tasks: dict[str, Task]) -> nx.DiGraph:
 # Working hours helpers
 # ---------------------------------------------------------------------------
 
+def _get_daily_capacity(dt: datetime, config: ProjectConfig) -> float:
+    """Return the working hours capacity for the given date, respecting overrides."""
+    iso = dt.strftime("%Y-%m-%d")
+    if iso in config.capacity_overrides:
+        return config.capacity_overrides[iso]
+    if config.skip_weekends and dt.weekday() >= 5:
+        return 0.0
+    return config.hours_per_day
+
 
 def _snap_to_work_start(dt: datetime, config: ProjectConfig) -> datetime:
     """Snap a datetime to the working window: if before day start, move to
@@ -57,7 +66,8 @@ def _snap_to_work_start(dt: datetime, config: ProjectConfig) -> datetime:
     )
     if dt < day_start:
         return day_start
-    day_end = day_start + timedelta(hours=config.hours_per_day)
+    cap = _get_daily_capacity(dt, config)
+    day_end = day_start + timedelta(hours=cap)
     if dt >= day_end:
         next_day = dt + timedelta(days=1)
         return next_day.replace(
@@ -70,10 +80,11 @@ def _snap_to_work_start(dt: datetime, config: ProjectConfig) -> datetime:
 
 
 def _skip_weekends_forward(dt: datetime, config: ProjectConfig) -> datetime:
-    """If dt falls on a weekend and skip_weekends is on, advance to Monday."""
-    if not config.skip_weekends:
-        return dt
-    while dt.weekday() >= 5:
+    """Advance until we hit a day with capacity > 0."""
+    while True:
+        cap = _get_daily_capacity(dt, config)
+        if cap > 0:
+            return dt
         dt += timedelta(days=1)
         dt = dt.replace(
             hour=config.day_start_hour,
@@ -81,22 +92,23 @@ def _skip_weekends_forward(dt: datetime, config: ProjectConfig) -> datetime:
             second=0,
             microsecond=0,
         )
-    return dt
 
 
 def _skip_weekends_backward(dt: datetime, config: ProjectConfig) -> datetime:
-    """If dt falls on a weekend, go back to Friday end-of-day."""
-    if not config.skip_weekends:
-        return dt
-    while dt.weekday() >= 5:
+    """Go back until we hit a day with capacity > 0.
+    Returns the end of that working day."""
+    while True:
+        cap = _get_daily_capacity(dt, config)
+        if cap > 0:
+            return dt
         dt -= timedelta(days=1)
+        prev_cap = _get_daily_capacity(dt, config)
         dt = dt.replace(
             hour=config.day_start_hour,
             minute=config.day_start_minute,
             second=0,
             microsecond=0,
-        ) + timedelta(hours=config.hours_per_day)
-    return dt
+        ) + timedelta(hours=prev_cap if prev_cap > 0 else 0)
 
 
 def add_working_hours(
@@ -111,12 +123,13 @@ def add_working_hours(
     current = _skip_weekends_forward(current, config)
 
     while remaining > 0:
+        cap = _get_daily_capacity(current, config)
         day_end = current.replace(
             hour=config.day_start_hour,
             minute=config.day_start_minute,
             second=0,
             microsecond=0,
-        ) + timedelta(hours=config.hours_per_day)
+        ) + timedelta(hours=cap)
 
         available = (day_end - current).total_seconds() / 3600
         if remaining <= available + 1e-9:
@@ -161,7 +174,9 @@ def _subtract_working_hours(
                 minute=config.day_start_minute,
                 second=0,
                 microsecond=0,
-            ) + timedelta(hours=config.hours_per_day)
+            )
+            prev_cap = _get_daily_capacity(prev_day, config)
+            prev_day += timedelta(hours=prev_cap)
             current = _skip_weekends_backward(prev_day, config)
             continue
 
@@ -174,7 +189,9 @@ def _subtract_working_hours(
             minute=config.day_start_minute,
             second=0,
             microsecond=0,
-        ) + timedelta(hours=config.hours_per_day)
+        )
+        prev_cap = _get_daily_capacity(prev_day, config)
+        prev_day += timedelta(hours=prev_cap)
         current = _skip_weekends_backward(prev_day, config)
 
     return current
@@ -194,12 +211,13 @@ def _working_hours_between(
     current = _skip_weekends_forward(current, config)
 
     while current < end:
+        cap = _get_daily_capacity(current, config)
         day_end = current.replace(
             hour=config.day_start_hour,
             minute=config.day_start_minute,
             second=0,
             microsecond=0,
-        ) + timedelta(hours=config.hours_per_day)
+        ) + timedelta(hours=cap)
 
         effective_end = min(day_end, end)
         hours_today = (effective_end - current).total_seconds() / 3600
@@ -288,10 +306,11 @@ def calculate_schedule(
             dl = datetime.fromisoformat(task.deadline)
             # Ensure deadline is at end of working day if only a date was given
             if dl.hour == 0 and dl.minute == 0:
+                cap = _get_daily_capacity(dl, config)
                 dl = dl.replace(
                     hour=config.day_start_hour,
                     minute=config.day_start_minute,
-                ) + timedelta(hours=config.hours_per_day)
+                ) + timedelta(hours=cap)
             lf[tid] = min(lf[tid], dl)
 
         ls[tid] = _subtract_working_hours(lf[tid], task.duration_hrs, config)

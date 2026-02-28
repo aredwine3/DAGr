@@ -81,6 +81,7 @@ def _task_to_dict(t: Task) -> dict:
         "name": t.name,
         "duration_hrs": t.duration_hrs,
         "depends_on": t.depends_on,
+        "tags": t.tags,
         "status": t.status.value,
         "background": t.background,
         "project": t.project,
@@ -129,6 +130,7 @@ def add_task(
     background: bool = False,
     project: str = "thesis",
     flexible: bool = False,
+    tags: list[str] | None = None,
     notes: str | None = None,
 ) -> str:
     """Add a new task to the project.
@@ -142,6 +144,7 @@ def add_task(
         background: True if task runs unattended (e.g. compute pipeline)
         project: Organizational tag (e.g., thesis, life)
         flexible: True if task bypasses normal critical path calculation
+        tags: List of context tags (e.g. ["errands", "low-energy"])
         notes: Markdown notes for the task
     """
     store = _get_store()
@@ -163,6 +166,7 @@ def add_task(
         background=background,
         project=project,
         flexible=flexible,
+        tags=tags or [],
         notes=notes,
     )
     store.save(config, tasks)
@@ -181,6 +185,8 @@ def update_task(
     flexible: bool | None = None,
     add_dep: list[str] | None = None,
     remove_dep: list[str] | None = None,
+    add_tag: list[str] | None = None,
+    remove_tag: list[str] | None = None,
     notes: str | None = None,
 ) -> str:
     """Update fields of an existing task. Only provided fields are changed.
@@ -196,6 +202,8 @@ def update_task(
         flexible: Whether task bypasses normal critical path calculation
         add_dep: Task IDs to add as dependencies
         remove_dep: Task IDs to remove from dependencies
+        add_tag: Tags to add to the task
+        remove_tag: Tags to remove from the task
         notes: New markdown notes
     """
     store = _get_store()
@@ -234,6 +242,16 @@ def update_task(
         for dep in remove_dep:
             if dep in t.depends_on:
                 t.depends_on.remove(dep)
+
+    if add_tag:
+        for tag in add_tag:
+            if tag not in t.tags:
+                t.tags.append(tag)
+                
+    if remove_tag:
+        for tag in remove_tag:
+            if tag in t.tags:
+                t.tags.remove(tag)
 
     store.save(config, tasks)
     return f"Updated {task_id}."
@@ -384,7 +402,7 @@ def import_tasks(tasks_json: list[dict]) -> str:
 
         if task_id and task_id in tasks:
             t = tasks[task_id]
-            for field in ("name", "duration_hrs", "deadline", "proposed_start", "background", "project", "flexible", "notes"):
+            for field in ("name", "duration_hrs", "deadline", "proposed_start", "background", "project", "flexible", "tags", "notes"):
                 if field in entry:
                     setattr(t, field, entry[field])
             import_name_to_id[t.name] = task_id
@@ -405,6 +423,7 @@ def import_tasks(tasks_json: list[dict]) -> str:
                 background=entry.get("background", False),
                 project=entry.get("project", "thesis"),
                 flexible=entry.get("flexible", False),
+                tags=entry.get("tags", []),
                 notes=entry.get("notes"),
             )
             tasks[new_id] = t
@@ -497,12 +516,13 @@ def get_task(task_id: str) -> str:
 
 
 @mcp.tool()
-def list_tasks(status_filter: str | None = None, search: str | None = None) -> str:
+def list_tasks(status_filter: str | None = None, search: str | None = None, tag_filter: str | None = None) -> str:
     """List all tasks with optional filtering.
 
     Args:
         status_filter: Filter by status: "not_started", "in_progress", or "done"
         search: Filter by name (case-insensitive substring match)
+        tag_filter: Filter by specific tag (e.g. "errands")
     """
     store = _get_store()
     config, tasks = store.load()
@@ -521,6 +541,10 @@ def list_tasks(status_filter: str | None = None, search: str | None = None) -> s
     if search:
         q = search.lower()
         filtered = [t for t in filtered if q in t.name.lower()]
+
+    if tag_filter:
+        q = tag_filter.lower()
+        filtered = [t for t in filtered if any(q == tag.lower() for tag in t.tags)]
 
     if not filtered:
         return "No matching tasks."
@@ -658,18 +682,38 @@ def get_next_task() -> str:
     if bg_ready:
         result["background_ready"] = bg_ready
 
-    # Flexible tasks ready to kick off
-    flex_ready = []
+    # Flexible tasks ready to kick off (Dopamine Menu options)
+    quick_wins = []
+    low_energy = []
+    hyperfocus = []
+    other_flex = []
+    
     for s in leveled:
         if s.task.status != TaskStatus.NOT_STARTED or not s.task.flexible:
             continue
         if all(tasks[d].status == TaskStatus.DONE for d in s.task.depends_on if d in tasks):
-            flex_ready.append({
+            t_data = {
                 "id": s.task.id, "name": s.task.name, "project": s.task.project,
-                "duration_hrs": s.task.duration_hrs,
-            })
-    if flex_ready:
-        result["flexible_ready"] = flex_ready
+                "duration_hrs": s.task.duration_hrs, "tags": s.task.tags,
+            }
+            tags_lower = set(t.lower() for t in s.task.tags)
+            
+            if s.task.duration_hrs < 1.0 or "quick" in tags_lower:
+                quick_wins.append(t_data)
+            elif "low-energy" in tags_lower or "braindead" in tags_lower:
+                low_energy.append(t_data)
+            elif "hyperfocus" in tags_lower or "deep-work" in tags_lower:
+                hyperfocus.append(t_data)
+            else:
+                other_flex.append(t_data)
+
+    if any([quick_wins, low_energy, hyperfocus, other_flex]):
+        result["dopamine_menu"] = {
+            "quick_wins": quick_wins,
+            "low_energy": low_energy,
+            "hyperfocus": hyperfocus,
+            "other_side_quests": other_flex
+        }
 
     # Next foreground task
     for s in leveled:
@@ -708,6 +752,29 @@ def get_critical_path() -> str:
         "tasks": [_scheduled_to_dict(s) for s in crit],
     }
     return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def set_day_capacity(date_iso: str, hours: float) -> str:
+    """Set the working hour capacity for a specific day.
+    
+    Args:
+        date_iso: Date in YYYY-MM-DD format (e.g. "2026-03-05")
+        hours: Number of working hours for that day (e.g. 0.0 for day off, 12.0 for hyperfocus)
+    """
+    store = _get_store()
+    config, tasks = store.load()
+    if config is None:
+        return "Error: Project not initialized. Run 'dagr init' first."
+        
+    try:
+        datetime.strptime(date_iso, "%Y-%m-%d")
+    except ValueError:
+        return "Error: date_iso must be in YYYY-MM-DD format."
+        
+    config.capacity_overrides[date_iso] = hours
+    store.save(config, tasks)
+    return f"Set capacity for {date_iso} to {hours} hours."
 
 
 def main():

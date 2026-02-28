@@ -22,6 +22,7 @@ class ProjectConfig:
     day_start_hour: int = 9
     day_start_minute: int = 0
     skip_weekends: bool = True
+    capacity_overrides: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -30,6 +31,7 @@ class ProjectConfig:
             "day_start_hour": self.day_start_hour,
             "day_start_minute": self.day_start_minute,
             "skip_weekends": self.skip_weekends,
+            "capacity_overrides": self.capacity_overrides,
         }
 
     @classmethod
@@ -40,6 +42,7 @@ class ProjectConfig:
             day_start_hour=d.get("day_start_hour", 9),
             day_start_minute=d.get("day_start_minute", 0),
             skip_weekends=d.get("skip_weekends", True),
+            capacity_overrides=d.get("capacity_overrides", {}),
         )
 
 
@@ -51,6 +54,7 @@ class Task:
     name: str
     duration_hrs: float
     depends_on: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     deadline: str | None = None
     proposed_start: str | None = None
     status: TaskStatus = TaskStatus.NOT_STARTED
@@ -66,6 +70,7 @@ class Task:
             "name": self.name,
             "duration_hrs": self.duration_hrs,
             "depends_on": self.depends_on,
+            "tags": self.tags,
             "deadline": self.deadline,
             "proposed_start": self.proposed_start,
             "status": self.status.value,
@@ -86,6 +91,7 @@ class Task:
             name=d["name"],
             duration_hrs=d["duration_hrs"],
             depends_on=d.get("depends_on", []),
+            tags=d.get("tags", []),
             deadline=d.get("deadline"),
             proposed_start=d.get("proposed_start"),
             status=TaskStatus(d.get("status", "not_started")),
